@@ -13,11 +13,9 @@ it('returns the same instance from the container', function () {
 });
 
 it('merges the package config', function () {
-    expect(config('proxmox.placeholder'))->toBe('default');
-});
-
-it('registers the artisan command', function () {
-    $this->artisan('proxmox:placeholder')
-        ->expectsOutputToContain('Proxmox placeholder command executed.')
-        ->assertSuccessful();
+    expect(config('proxmox.url'))->toBe('')
+        ->and(config('proxmox.api_token_id'))->toBe('')
+        ->and(config('proxmox.api_token_secret'))->toBe('')
+        ->and(config('proxmox.timeout'))->toBe(30)
+        ->and(config('proxmox.verify_ssl'))->toBeTrue();
 });

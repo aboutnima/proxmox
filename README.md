@@ -20,36 +20,38 @@ You can install the package via Composer:
 composer require aboutnima/proxmox
 ```
 
-You may publish all of the package's resources at once:
-
-```bash
-php artisan vendor:publish --tag="proxmox"
-```
-
-Or, you may publish each resource individually:
-
 ### Publishing the Configuration File
 
 ```bash
 php artisan vendor:publish --tag="proxmox-config"
 ```
 
-### Publishing and Running the Migrations
-
-```bash
-php artisan vendor:publish --tag="proxmox-migrations"
-php artisan migrate
-```
-
-### Publishing the Public Assets
-
-```bash
-php artisan vendor:publish --tag="proxmox-assets"
-```
-
 ## Usage
 
-<!-- Add a basic usage example here. -->
+Configure an API token in your application's `.env` file. `PROXMOX_URL` should include the `/api2/json` path:
+
+```dotenv
+PROXMOX_URL=https://proxmox.example.com:8006/api2/json
+PROXMOX_API_TOKEN_ID=laravel@pam!app
+PROXMOX_API_TOKEN_SECRET=your-token-secret
+```
+
+Use the facade to call any Proxmox API endpoint. GET parameters are sent as query parameters, and write parameters are sent as form data:
+
+```php
+use Proxmox\Proxmox\Facades\Proxmox;
+
+$nodes = Proxmox::get('nodes')
+    ->throw()
+    ->json('data');
+
+Proxmox::post('nodes/pve1/qemu', [
+    'vmid' => 101,
+    'name' => 'web',
+])->throw();
+```
+
+The client also provides `put()`, `delete()`, and `request()` methods. Each returns a Laravel HTTP `Response`; call `throw()` when you want unsuccessful responses to raise an exception. TLS verification is enabled by default and can be configured with `PROXMOX_VERIFY_SSL`; request timeout defaults to 30 seconds and can be changed with `PROXMOX_TIMEOUT`.
 
 ## Changelog
 

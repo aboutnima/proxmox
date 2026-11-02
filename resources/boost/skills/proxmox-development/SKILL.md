@@ -13,34 +13,47 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 
 ## Primary Goal
 
-- Use only the package's implemented public API; do not assume REST client methods or configuration that are not present.
+- Use the package facade to make authenticated requests to Proxmox API endpoints.
 
 ## Workflow
 
-### 1. Check the package capabilities
-
-- Review the package README and implementation before writing integration code.
-- The current `Proxmox` class and `proxmox` config are placeholders; the package does not yet expose REST API client methods or connection settings.
-
-### 2. Install and inspect available resources
+### 1. Install and configure
 
 - Install with `composer require aboutnima/proxmox`.
-- Publish package resources only when needed, using the tags documented in the README.
-- Do not write application code against imagined package methods. Use an existing supported API only after verifying it in the package.
+- Optionally publish configuration with `php artisan vendor:publish --tag=proxmox-config`.
+- Set `PROXMOX_URL` to the Proxmox API base URL, including `/api2/json`.
+- Set `PROXMOX_API_TOKEN_ID` and `PROXMOX_API_TOKEN_SECRET` for API-token authentication.
 
-## Rules, References, and Templates
+### 2. Call API endpoints
 
-Read before making integration changes:
+- Import `Proxmox\Proxmox\Facades\Proxmox`.
+- Use `get()` for query parameters and `post()`, `put()`, or `delete()` for form-encoded data.
+- Use `request()` for other HTTP methods or custom Laravel HTTP client options.
+- Each method returns an `Illuminate\Http\Client\Response`; call `throw()` when non-success responses should raise an exception.
 
-- `README.md`
-- `config/proxmox.php`
-- `src/Proxmox.php`
+## References
+
+- `README.md` for install and usage examples.
+- `config/proxmox.php` for connection, timeout, and TLS verification settings.
+- `src/Proxmox.php` and `src/Facades/Proxmox.php` for the public client API.
 
 ## Examples
 
-- Do not provide REST API usage examples until the package exposes a client API and configuration for them.
+```php
+use Proxmox\Proxmox\Facades\Proxmox;
+
+$nodes = Proxmox::get('nodes')
+    ->throw()
+    ->json('data');
+
+Proxmox::post('nodes/pve1/qemu', [
+    'vmid' => 101,
+    'name' => 'web',
+])->throw();
+```
 
 ## Anti-patterns
 
-- Do not treat placeholder config, migrations, or commands as Proxmox API functionality.
-- Do not invent endpoints, authentication options, or facade methods.
+- Do not pass an absolute URL as an endpoint; the client only accepts relative API paths.
+- Do not disable TLS verification to work around certificate problems; configure a trusted Proxmox certificate instead.
+- Do not assume unsuccessful HTTP responses throw automatically; call `throw()` or inspect the response status.
