@@ -33,12 +33,12 @@
     },
     "autoload": {
         "psr-4": {
-            "Proxmox\\Proxmox\\": "src/"
+            "Proxmox\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Proxmox\\Proxmox\\Tests\\": "tests/",
+            "Proxmox\\Tests\\": "tests/",
             "Workbench\\App\\": "workbench/app/",
             "Workbench\\Database\\Factories\\": "workbench/database/factories/",
             "Workbench\\Database\\Seeders\\": "workbench/database/seeders/"
@@ -88,10 +88,10 @@
     "extra": {
         "laravel": {
             "providers": [
-                "Proxmox\\Proxmox\\ProxmoxServiceProvider"
+                "Proxmox\\ProxmoxServiceProvider"
             ],
             "aliases": {
-                "Proxmox": "Proxmox\\Proxmox\\Facades\\Proxmox"
+                "Proxmox": "Proxmox\\Facades\\Proxmox"
             }
         }
     },

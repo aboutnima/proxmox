@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Proxmox\Proxmox\Tests;
+namespace Proxmox\Tests;
 
 use Orchestra\Testbench\TestCase as Orchestra;
-use Proxmox\Proxmox\ProxmoxServiceProvider;
+use Proxmox\ProxmoxServiceProvider;
 
 abstract class TestCase extends Orchestra
 {
