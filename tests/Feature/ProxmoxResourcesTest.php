@@ -8,15 +8,15 @@ use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Proxmox\Facades\Proxmox;
-use Proxmox\Resources\Node;
-use Proxmox\Resources\VirtualMachine;
-use Proxmox\Resources\VirtualMachines;
+use Proxmox\Resources\Nodes\Node;
+use Proxmox\Resources\VirtualMachines\VirtualMachine;
+use Proxmox\Resources\VirtualMachines\VirtualMachines;
 
 beforeEach(function () {
     config()->set([
-        'proxmox.url' => 'https://proxmox.example.test:8006/api2/json',
-        'proxmox.api_token_id' => 'laravel@pam!package',
-        'proxmox.api_token_secret' => 'token-secret',
+        'proxmox.connections.default.url' => 'https://proxmox.example.test:8006/api2/json',
+        'proxmox.connections.default.api_token_id' => 'laravel@pam!package',
+        'proxmox.connections.default.api_token_secret' => 'token-secret',
     ]);
 
     Http::preventStrayRequests();
@@ -254,7 +254,7 @@ it('retrieves an individual resource from its status endpoint', function (bool $
 
     Http::fake(['*' => Http::response(['data' => $data])]);
 
-    $resource = $vms ? Proxmox::node('my')->vm(101) : Proxmox::node('my');
+    $resource = $vms ? Proxmox::node('my')->virtualMachine(101) : Proxmox::node('my');
 
     Http::assertNothingSent();
 
@@ -271,7 +271,7 @@ it('restricts identified resources to the single resource API', function (bool $
     Http::fake(['*' => Http::response(['data' => ['status' => 'running']])]);
 
     $node = $plural ? Proxmox::nodes('my') : Proxmox::node('my');
-    $resource = $vms ? ($plural ? $node->virtualMachine('101') : $node->vm(101)) : $node;
+    $resource = $vms ? $node->virtualMachine($plural ? '101' : 101) : $node;
 
     expect($resource)->toBeInstanceOf($vms ? VirtualMachine::class : Node::class)
         ->and(method_exists($resource, 'all'))->toBeFalse()
@@ -321,7 +321,7 @@ it('creates a VM with native Proxmox QEMU resource and cloud-init options', func
 
     Http::fake(['*/nodes/my/qemu' => Http::response(['data' => $task])]);
 
-    expect(Proxmox::node('my')->virtualMachine()->create($configuration))->toBe($task);
+    expect(Proxmox::node('my')->virtualMachine()->create($configuration)->upid)->toBe($task);
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
         && $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/qemu'
@@ -370,8 +370,8 @@ it('keeps individual VM scopes independent and accepts integer or string identif
         '*/nodes/other/qemu/201/status/current' => Http::response(['data' => ['vmid' => 201]]),
     ]);
 
-    $first = Proxmox::node('my')->vm('101');
-    $second = Proxmox::node('other')->vm(201);
+    $first = Proxmox::node('my')->virtualMachine('101');
+    $second = Proxmox::node('other')->virtualMachine(201);
 
     Http::assertNothingSent();
 
@@ -383,19 +383,15 @@ it('keeps individual VM scopes independent and accepts integer or string identif
 });
 
 it('rejects invalid VM identifiers before sending a request', function (int|string $vmid) {
-    expect(fn () => Proxmox::node('my')->vm($vmid)->get())
-        ->toThrow(InvalidArgumentException::class, 'VM ID');
-
-    expect(fn () => Proxmox::node('my')->virtualMachine($vmid)->first())
+    expect(fn () => Proxmox::node('my')->virtualMachine($vmid)->get())
         ->toThrow(InvalidArgumentException::class, 'VM ID');
 
     Http::assertNothingSent();
 })->with([0, -1, '', ' ', '0', '-1', '0101', '1.5', '../101', '101/config', '101?x=1', '101#fragment']);
 
-it('validates node names for individual resources', function (bool $vms) {
-    $resource = $vms ? Proxmox::node('../other')->vm(101) : Proxmox::nodes('../other');
-
-    expect(fn () => $resource->get())->toThrow(InvalidArgumentException::class, 'node');
+it('validates node names as soon as an individual resource is selected', function (bool $vms) {
+    expect(fn () => $vms ? Proxmox::node('../other')->virtualMachine(101) : Proxmox::nodes('../other'))
+        ->toThrow(InvalidArgumentException::class, 'node');
 
     Http::assertNothingSent();
 })->with([false, true]);
@@ -404,7 +400,7 @@ it('encodes node names in individual resource paths', function (bool $vms) {
     Http::fake(['*' => Http::response(['data' => ['uptime' => 100]])]);
 
     $node = Proxmox::node(' my?node#name ');
-    ($vms ? $node->vm(101) : $node)->get();
+    ($vms ? $node->virtualMachine(101) : $node)->get();
 
     Http::assertSent(fn (Request $request): bool => $request->url()
         === 'https://proxmox.example.test:8006/api2/json/nodes/my%3Fnode%23name/'
@@ -414,7 +410,7 @@ it('encodes node names in individual resource paths', function (bool $vms) {
 it('automatically throws for unsuccessful individual resource requests', function (int $status, bool $vms) {
     Http::fake(['*' => Http::response(['errors' => ['permission' => 'denied']], $status)]);
 
-    $resource = $vms ? Proxmox::node('my')->vm(101) : Proxmox::node('my');
+    $resource = $vms ? Proxmox::node('my')->virtualMachine(101) : Proxmox::node('my');
 
     expect(fn () => $resource->get())->toThrow(RequestException::class, (string) $status);
 })->with([401, 403, 404, 500])->with([false, true]);
@@ -422,7 +418,7 @@ it('automatically throws for unsuccessful individual resource requests', functio
 it('propagates connection failures from individual resources', function (bool $vms) {
     Http::fake(['*' => Http::failedConnection()]);
 
-    $resource = $vms ? Proxmox::node('my')->vm(101) : Proxmox::node('my');
+    $resource = $vms ? Proxmox::node('my')->virtualMachine(101) : Proxmox::node('my');
 
     expect(fn () => $resource->first())->toThrow(ConnectionException::class);
 })->with([false, true]);
@@ -430,7 +426,7 @@ it('propagates connection failures from individual resources', function (bool $v
 it('rejects malformed individual resource data', function (array|string $body, bool $vms) {
     Http::fake(['*' => Http::response($body)]);
 
-    $resource = $vms ? Proxmox::node('my')->vm(101) : Proxmox::node('my');
+    $resource = $vms ? Proxmox::node('my')->virtualMachine(101) : Proxmox::node('my');
 
     expect(fn () => $resource->get())->toThrow(UnexpectedValueException::class, 'data');
 })->with([

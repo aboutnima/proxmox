@@ -10,11 +10,11 @@ use Proxmox\Proxmox;
 
 beforeEach(function () {
     config()->set([
-        'proxmox.url' => 'https://proxmox.example.test:8006/api2/json',
-        'proxmox.api_token_id' => 'laravel@pam!package',
-        'proxmox.api_token_secret' => 'token-secret',
-        'proxmox.timeout' => 15,
-        'proxmox.verify_ssl' => true,
+        'proxmox.connections.default.url' => 'https://proxmox.example.test:8006/api2/json',
+        'proxmox.connections.default.api_token_id' => 'laravel@pam!package',
+        'proxmox.connections.default.api_token_secret' => 'token-secret',
+        'proxmox.connections.default.timeout' => 15,
+        'proxmox.connections.default.verify_ssl' => true,
     ]);
 
     Http::fake([
@@ -85,14 +85,15 @@ it('sends PUT request data as form parameters', function () {
         && $request->hasHeader('Content-Type', 'application/x-www-form-urlencoded'));
 });
 
-it('sends DELETE request data as form parameters', function () {
+it('sends DELETE parameters in the query string because Proxmox ignores DELETE bodies', function () {
     app(Proxmox::class)->delete('/nodes/pve1/qemu/101', [
         'purge' => 1,
+        'destroy-unreferenced-disks' => 1,
     ]);
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'DELETE'
-        && $request->body() === 'purge=1'
-        && $request->hasHeader('Content-Type', 'application/x-www-form-urlencoded'));
+        && $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/pve1/qemu/101?purge=1&destroy-unreferenced-disks=1'
+        && $request->body() === '');
 });
 
 it('supports arbitrary HTTP methods and request options', function () {
@@ -115,7 +116,7 @@ it('uses form encoding for generic requests with form parameters', function () {
 });
 
 it('fails clearly when the API URL is missing', function () {
-    config()->set('proxmox.url', '');
+    config()->set('proxmox.connections.default.url', '');
 
     expect(fn () => app(Proxmox::class)->get('/nodes'))
         ->toThrow(LogicException::class, 'PROXMOX_URL');
@@ -124,7 +125,7 @@ it('fails clearly when the API URL is missing', function () {
 });
 
 it('fails clearly when required API configuration is missing', function () {
-    config()->set('proxmox.api_token_secret', '');
+    config()->set('proxmox.connections.default.api_token_secret', '');
 
     expect(fn () => app(Proxmox::class)->get('/nodes'))
         ->toThrow(LogicException::class, 'PROXMOX_API_TOKEN_SECRET');
@@ -133,7 +134,7 @@ it('fails clearly when required API configuration is missing', function () {
 });
 
 it('requires a positive request timeout', function () {
-    config()->set('proxmox.timeout', 0);
+    config()->set('proxmox.connections.default.timeout', 0);
 
     expect(fn () => app(Proxmox::class)->get('/nodes'))
         ->toThrow(LogicException::class, 'PROXMOX_TIMEOUT');

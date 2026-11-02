@@ -8,9 +8,9 @@ use Proxmox\Facades\Proxmox;
 
 beforeEach(function () {
     config()->set([
-        'proxmox.url' => 'https://proxmox.example.test:8006/api2/json',
-        'proxmox.api_token_id' => 'laravel@pam!package',
-        'proxmox.api_token_secret' => 'token-secret',
+        'proxmox.connections.default.url' => 'https://proxmox.example.test:8006/api2/json',
+        'proxmox.connections.default.api_token_id' => 'laravel@pam!package',
+        'proxmox.connections.default.api_token_secret' => 'token-secret',
     ]);
 
     Http::preventStrayRequests();
@@ -38,7 +38,7 @@ it('translates readable VM creation fields through both public entry points', fu
         ? Proxmox::createVirtualMachine('my', $configuration)
         : Proxmox::node('my')->virtualMachine()->create($configuration);
 
-    expect($result)->toBe($task)
+    expect($result->upid)->toBe($task)
         ->and($configuration['disk'])->toBe(32)
         ->and($configuration)->not->toHaveKey('scsi0');
 

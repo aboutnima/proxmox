@@ -2,9 +2,11 @@
 
 declare(strict_types=1);
 
-namespace Proxmox\Support;
+namespace Proxmox\Resources\VirtualMachines;
 
+use Illuminate\Support\Arr;
 use InvalidArgumentException;
+use Proxmox\Support\Identifier;
 
 /**
  * @internal
@@ -31,7 +33,7 @@ final class VirtualMachineConfiguration
             }
         }
 
-        $cloudInit = array_intersect(['image', 'ip', 'user', 'password', 'ssh_key'], array_keys($configuration)) !== [];
+        $cloudInit = Arr::hasAny($configuration, ['image', 'ip', 'user', 'password', 'ssh_key']);
 
         if ($cloudInit && array_key_exists('ide2', $configuration)) {
             throw new InvalidArgumentException('Readable Cloud-Init fields automatically configure ide2; use native fields with a custom ide2.');
@@ -52,7 +54,7 @@ final class VirtualMachineConfiguration
             $configuration += ['boot' => 'order=scsi0', 'serial0' => 'socket', 'vga' => 'serial0'];
         }
 
-        if (array_key_exists('disk', $configuration) || array_key_exists('image', $configuration)) {
+        if (Arr::hasAny($configuration, ['disk', 'image'])) {
             $configuration += ['scsihw' => 'virtio-scsi-pci'];
         }
 
@@ -68,7 +70,7 @@ final class VirtualMachineConfiguration
             }
 
             $configuration['ipconfig0'] = self::ipConfiguration($configuration);
-        } elseif (array_key_exists('prefix', $configuration) || array_key_exists('gateway', $configuration)) {
+        } elseif (Arr::hasAny($configuration, ['prefix', 'gateway'])) {
             throw new InvalidArgumentException('prefix and gateway require an ip.');
         }
 
@@ -91,16 +93,7 @@ final class VirtualMachineConfiguration
             $configuration['ide2'] = self::identifier($configuration, 'storage').':cloudinit';
         }
 
-        unset(
-            $configuration['disk'],
-            $configuration['image'],
-            $configuration['bridge'],
-            $configuration['ip'],
-            $configuration['prefix'],
-            $configuration['gateway'],
-        );
-
-        return $configuration;
+        return Arr::except($configuration, ['disk', 'image', 'bridge', 'ip', 'prefix', 'gateway']);
     }
 
     private static function image(mixed $image): string
@@ -117,13 +110,7 @@ final class VirtualMachineConfiguration
      */
     private static function identifier(array $configuration, string $field): string
     {
-        $value = $configuration[$field] ?? null;
-
-        if (! is_string($value) || preg_match('/^[a-zA-Z][a-zA-Z0-9_.-]*$/D', $value) !== 1) {
-            throw new InvalidArgumentException("{$field} must be a non-empty identifier containing only letters, numbers, underscores, dots, and hyphens, starting with a letter.");
-        }
-
-        return $value;
+        return Identifier::name($configuration[$field] ?? null, $field);
     }
 
     /**

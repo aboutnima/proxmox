@@ -9,12 +9,13 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Sleep;
 use Proxmox\Facades\Proxmox;
+use Proxmox\Resources\Tasks\Task;
 
 beforeEach(function () {
     config()->set([
-        'proxmox.url' => 'https://proxmox.example.test:8006/api2/json',
-        'proxmox.api_token_id' => 'laravel@pam!package',
-        'proxmox.api_token_secret' => 'token-secret',
+        'proxmox.connections.default.url' => 'https://proxmox.example.test:8006/api2/json',
+        'proxmox.connections.default.api_token_id' => 'laravel@pam!package',
+        'proxmox.connections.default.api_token_secret' => 'token-secret',
     ]);
 
     Http::preventStrayRequests();
@@ -119,7 +120,9 @@ it('maps guest credentials and preserves CPU topology through both creation entr
         ? Proxmox::createVirtualMachine('my', $configuration)
         : Proxmox::node('my')->virtualMachine()->create($configuration);
 
-    expect($task)->toBe('UPID:create')
+    expect($task)->toBeInstanceOf(Task::class)
+        ->and($task->upid)->toBe('UPID:create')
+        ->and($task->node)->toBe('my')
         ->and($configuration['ssh_key'])->toBe($keys);
 
     Http::assertSent(function (Request $request) use ($keys): bool {
@@ -183,7 +186,7 @@ it('imports a selected image into a new boot disk with Cloud-Init and a serial c
         'user' => 'ubuntu',
     ]);
 
-    expect($task)->toBe('UPID:import');
+    expect($task->upid)->toBe('UPID:import');
 
     Http::assertSent(fn (Request $request): bool => $request->data() == [
         'vmid' => 101,
@@ -235,7 +238,7 @@ it('waits for successful import before requesting an absolute disk size', functi
         ? Proxmox::createVirtualMachine('my', $configuration, importTimeout: 10)
         : Proxmox::node('my')->virtualMachine()->create($configuration, importTimeout: 10);
 
-    expect($task)->toBe('UPID:resize');
+    expect($task->upid)->toBe('UPID:resize');
 
     expect(Http::recorded()->map(fn (array $record): string => $record[0]->method())->all())
         ->toBe(['POST', 'GET', 'GET', 'PUT']);
