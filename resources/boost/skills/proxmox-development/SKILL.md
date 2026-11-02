@@ -33,10 +33,14 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 - Prefer `node($name)->get()` and `node($name)->virtualMachine($id)->get()` for individual status arrays. These call the node `/status` and VM `/status/current` endpoints, not a filtered list. VM IDs accept positive integers or their string representations.
 - `nodes($name)` and `node($name)->virtualMachine($id)` select individual resources. Single-resource objects have `get()` and its `first()` alias, but no `all()` or `where()`.
 - All resource methods unwrap `data` and throw HTTP errors automatically, including HTTP 404 on identified resources; only list `first()` can return `null` for no match. Malformed data fails rather than becoming an empty result.
-- Create a QEMU VM with `node($name)->virtualMachine()->create($configuration)` or `createVirtualMachine($node, $configuration)`. Supply `vmid`, `cores`, and `memory` (MiB); use readable `disk` (positive integer GiB), `storage`, and `bridge` fields. The method returns the asynchronous task UPID.
+- Create a QEMU VM with `node($name)->virtualMachine()->create($configuration)` or `createVirtualMachine($node, $configuration)`. Supply `vmid`, `sockets`, `cores` per socket, and `memory` (MiB); use readable `disk` (positive integer GiB), `storage`, and `bridge` fields.
 - Readable `ip` accepts a plain IPv4 address with an explicit integer `prefix` (0-32) and optional `gateway`. Use `ip => 'dhcp'` without a prefix/gateway for DHCP. IP configuration requires `storage` and `bridge` (or native `net0`) and automatically adds a Cloud-Init drive.
-- Native API fields remain supported, including IPv6 in `ipconfig0`. Do not mix `disk`/`scsi0`, `bridge`/`net0`, or `ip` with `ipconfig0`/`ide2`; conflicts throw before making requests.
-- IP configuration requires a Cloud-Init-enabled guest image and does not allocate public IPs. VM creation allocates hardware but does not install an OS or clone a template.
+- Set Cloud-Init guest credentials using `user`, optional `password`, and `ssh_key` (unencoded OpenSSH public key text, one key per line). The package maps and encodes these; never supply a private key or a local key-file path. Each readable credential, `ip`, or `image` automatically adds a Cloud-Init drive on `storage`.
+- List QCOW2 import sources using `node($name)->images($storage)->all()` or `getImages($node, $storage)`. Image queries also support `get()`, `where()`, and `first()`. Source files must already exist on file-based Proxmox storage with `import` content enabled; the default `local` import directory is `/var/lib/vz/import/` on the host. This does not discover files on the Laravel server or existing VM disks.
+- Set `image` to a listed `volid`, for example `local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2`, and `storage` to the destination disk storage. Import copies into a new `scsi0` boot disk, defaults to `virtio-scsi-pci` and a serial console, and returns the import UPID when `disk` is omitted.
+- With both `image` and `disk`, creation waits for successful import, then requests an absolute resize and returns its task UPID. Use the optional `importTimeout: 300` argument to control polling, run this in a queued job, and monitor the final resize task before starting the VM. The API token needs disk-resize permission. Disks cannot shrink; choose at least the source virtual disk size, not its download size. Failed imports/timeouts throw; existing remote VMs/tasks are not cancelled or deleted. Do not retry creation blindly.
+- Native API fields remain supported, including IPv6 in `ipconfig0`. Do not mix `disk`/`image` with `scsi0`, `bridge` with `net0`, `ip` with `ipconfig0`, or credential aliases with their native equivalents. Readable Cloud-Init fields conflict with native `ide2`; use native fields together for a custom drive. Native `sshkeys` is passed through and must already be URL-encoded.
+- IP/guest credentials require a Cloud-Init-enabled image and do not allocate public IPs. Without `image`, creation allocates blank hardware; it does not install an OS or clone a template. Listing QCOW2 files does not establish that they contain Cloud-Init.
 - The direct shortcuts `getNodes()` and `getVirtualMachines($node)` return the same collections. Remove `->throw()->json('data')` when migrating existing shortcut calls.
 - The direct shortcuts `getNode($name)` and `getVirtualMachine($node, $id)` return individual status arrays.
 - Generic `get()`, `post()`, `put()`, `delete()`, and `request()` still return raw HTTP responses. Only these low-level calls require explicit `throw()` and `json('data')`.
@@ -61,18 +65,24 @@ $runningVms = Proxmox::node('my')->virtualMachine()->where('status', 'running')-
 
 $vm = Proxmox::node('my')->virtualMachine(101)->get();
 
+$images = Proxmox::node('my')->images('local')->all();
+
 $task = Proxmox::node('my')->virtualMachine()->create([
     'vmid' => 102,
     'name' => 'web-102',
+    'sockets' => 1,
     'cores' => 2,
     'memory' => 4096,
+    'image' => 'local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2',
     'disk' => 32,
     'storage' => 'local-lvm',
     'bridge' => 'vmbr0',
     'ip' => '192.0.2.10',
     'prefix' => 24,
     'gateway' => '192.0.2.1',
-]);
+    'user' => 'ubuntu',
+    'ssh_key' => $publicKey,
+], importTimeout: 300);
 ```
 
 In application tests, fake the Laravel HTTP client:
@@ -94,4 +104,6 @@ expect(Proxmox::node('my')->virtualMachine()->all()->pluck('vmid')->all())->toBe
 - Do not call list methods such as `all()` or `where()` after selecting a node or VM by identifier.
 - Do not assume `where()` reduces the amount of data fetched from Proxmox, or that single-resource status arrays have the same fields as listing rows.
 - Do not assume a bridge or Cloud-Init drive alone assigns an IP address; use a Cloud-Init-enabled guest and provide `ip`/`prefix`/`gateway` or native `ipconfig0`.
+- Do not enable native `start` with both `image` and `disk`; start only after the returned resize task succeeds.
+- Do not use an ISO, a Laravel-local file path, or an existing VM's writable disk as the readable `image` source.
 - Do not assume raw HTTP methods throw automatically; call `throw()` or inspect their response status.

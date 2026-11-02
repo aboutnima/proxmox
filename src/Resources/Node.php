@@ -33,6 +33,11 @@ readonly class Node
         return new VirtualMachine($this->client, $this->name, $vmid);
     }
 
+    public function images(string $storage): Images
+    {
+        return new Images($this->client, $this->name, $storage);
+    }
+
     /**
      * @return array<array-key, mixed>
      *

@@ -10,6 +10,7 @@ use Illuminate\Support\Collection;
 use InvalidArgumentException;
 use LogicException;
 use Proxmox\Proxmox;
+use RuntimeException;
 use UnexpectedValueException;
 
 readonly class VirtualMachines extends ResourceQuery
@@ -30,10 +31,11 @@ readonly class VirtualMachines extends ResourceQuery
      * @throws InvalidArgumentException
      * @throws LogicException
      * @throws RequestException
+     * @throws RuntimeException
      * @throws UnexpectedValueException
      */
-    public function create(array $configuration): string
+    public function create(array $configuration, int $importTimeout = 300): string
     {
-        return $this->client->createVirtualMachine($this->node, $configuration);
+        return $this->client->createVirtualMachine($this->node, $configuration, $importTimeout);
     }
 }

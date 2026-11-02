@@ -17,10 +17,24 @@ final class VirtualMachineConfiguration
      */
     public static function toApiParameters(array $configuration): array
     {
-        foreach (['disk' => 'scsi0', 'bridge' => 'net0', 'ip' => 'ipconfig0'] as $field => $native) {
+        foreach ([
+            'disk' => 'scsi0',
+            'image' => 'scsi0',
+            'bridge' => 'net0',
+            'ip' => 'ipconfig0',
+            'user' => 'ciuser',
+            'password' => 'cipassword',
+            'ssh_key' => 'sshkeys',
+        ] as $field => $native) {
             if (array_key_exists($field, $configuration) && array_key_exists($native, $configuration)) {
                 throw new InvalidArgumentException("Use either {$field} or {$native}, not both.");
             }
+        }
+
+        $cloudInit = array_intersect(['image', 'ip', 'user', 'password', 'ssh_key'], array_keys($configuration)) !== [];
+
+        if ($cloudInit && array_key_exists('ide2', $configuration)) {
+            throw new InvalidArgumentException('Readable Cloud-Init fields automatically configure ide2; use native fields with a custom ide2.');
         }
 
         if (array_key_exists('disk', $configuration)) {
@@ -31,10 +45,15 @@ final class VirtualMachineConfiguration
             }
 
             $configuration['scsi0'] = self::identifier($configuration, 'storage').':'.$disk;
+        }
 
-            if (! array_key_exists('scsihw', $configuration)) {
-                $configuration['scsihw'] = 'virtio-scsi-pci';
-            }
+        if (array_key_exists('image', $configuration)) {
+            $configuration['scsi0'] = self::identifier($configuration, 'storage').':0,import-from='.self::image($configuration['image']);
+            $configuration += ['boot' => 'order=scsi0', 'serial0' => 'socket', 'vga' => 'serial0'];
+        }
+
+        if (array_key_exists('disk', $configuration) || array_key_exists('image', $configuration)) {
+            $configuration += ['scsihw' => 'virtio-scsi-pci'];
         }
 
         if (array_key_exists('bridge', $configuration)) {
@@ -42,11 +61,6 @@ final class VirtualMachineConfiguration
         }
 
         if (array_key_exists('ip', $configuration)) {
-            if (array_key_exists('ide2', $configuration)) {
-                throw new InvalidArgumentException('ip automatically configures ide2; use native ipconfig0 with a custom ide2.');
-            }
-
-            $storage = self::identifier($configuration, 'storage');
             $network = $configuration['net0'] ?? null;
 
             if (! is_string($network) || trim($network) === '') {
@@ -54,13 +68,32 @@ final class VirtualMachineConfiguration
             }
 
             $configuration['ipconfig0'] = self::ipConfiguration($configuration);
-            $configuration['ide2'] = $storage.':cloudinit';
         } elseif (array_key_exists('prefix', $configuration) || array_key_exists('gateway', $configuration)) {
             throw new InvalidArgumentException('prefix and gateway require an ip.');
         }
 
+        foreach (['user' => 'ciuser', 'password' => 'cipassword', 'ssh_key' => 'sshkeys'] as $field => $native) {
+            if (! array_key_exists($field, $configuration)) {
+                continue;
+            }
+
+            $value = $configuration[$field];
+
+            if (! is_string($value) || trim($value) === '') {
+                throw new InvalidArgumentException("{$field} must be a non-empty string.");
+            }
+
+            $configuration[$native] = $field === 'ssh_key' ? rawurlencode($value) : $value;
+            unset($configuration[$field]);
+        }
+
+        if ($cloudInit) {
+            $configuration['ide2'] = self::identifier($configuration, 'storage').':cloudinit';
+        }
+
         unset(
             $configuration['disk'],
+            $configuration['image'],
             $configuration['bridge'],
             $configuration['ip'],
             $configuration['prefix'],
@@ -68,6 +101,15 @@ final class VirtualMachineConfiguration
         );
 
         return $configuration;
+    }
+
+    private static function image(mixed $image): string
+    {
+        if (! is_string($image) || preg_match('/^[a-zA-Z][a-zA-Z0-9_.-]*:import\/[a-zA-Z0-9][a-zA-Z0-9_.-]*\.qcow2$/D', $image) !== 1) {
+            throw new InvalidArgumentException('image must be an importable QCOW2 volume ID such as local:import/ubuntu.qcow2.');
+        }
+
+        return $image;
     }
 
     /**
