@@ -31,6 +31,7 @@ it('merges the package config', function () {
             'timeout' => 30,
             'connect_timeout' => 10,
             'verify_ssl' => true,
+            'ca_bundle' => null,
             'retry' => ['times' => 0, 'sleep' => 100],
         ]);
 });

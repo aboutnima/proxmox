@@ -30,6 +30,8 @@ readonly class Proxmox
 
     private string $apiTokenSecret;
 
+    private ?string $caBundle;
+
     public function __construct(
         private Factory $http,
         string $baseUrl,
@@ -41,10 +43,12 @@ readonly class Proxmox
         private int $retries = 0,
         private int $retryDelay = 100,
         private string $name = 'default',
+        ?string $caBundle = null,
     ) {
         $this->baseUrl = rtrim(trim($baseUrl), '/');
         $this->apiTokenId = trim($apiTokenId);
         $this->apiTokenSecret = trim($apiTokenSecret);
+        $this->caBundle = $caBundle === null || trim($caBundle) === '' ? null : trim($caBundle);
     }
 
     /**
@@ -67,6 +71,7 @@ readonly class Proxmox
             retries: max(0, $config->integer('retry.times')),
             retryDelay: max(0, $config->integer('retry.sleep', 100)),
             name: $name,
+            caBundle: is_string($caBundle = $config->get('ca_bundle')) ? $caBundle : null,
         );
     }
 
@@ -215,6 +220,7 @@ readonly class Proxmox
             'timeout' => $this->timeout,
             'connectTimeout' => $this->connectTimeout,
             'verifySsl' => $this->verifySsl,
+            'caBundle' => $this->caBundle !== null && $this->caBundleIsPem() ? '[PEM certificate]' : $this->caBundle,
             'retries' => $this->retries,
             'retryDelay' => $this->retryDelay,
         ];
@@ -243,7 +249,7 @@ readonly class Proxmox
             ->withHeader('Authorization', 'PVEAPIToken='.$this->apiTokenId.'='.$this->apiTokenSecret)
             ->timeout($this->timeout)
             ->connectTimeout($this->connectTimeout)
-            ->withOptions(['verify' => $this->verifySsl])
+            ->withOptions($this->tlsOptions())
             ->when(
                 $method === 'GET' && $this->retries > 0,
                 fn (PendingRequest $request) => $request->retry(
@@ -253,6 +259,33 @@ readonly class Proxmox
                     throw: false,
                 ),
             );
+    }
+
+    /**
+     * @return array<string, mixed>
+     *
+     * @throws InvalidConfigurationException
+     */
+    private function tlsOptions(): array
+    {
+        if (! $this->verifySsl || $this->caBundle === null) {
+            return ['verify' => $this->verifySsl];
+        }
+
+        if (! $this->caBundleIsPem()) {
+            return ['verify' => $this->caBundle];
+        }
+
+        if (! defined('CURLOPT_CAINFO_BLOB')) {
+            throw InvalidConfigurationException::caBundleBlobUnsupported($this->name);
+        }
+
+        return ['verify' => true, 'curl' => [CURLOPT_CAINFO_BLOB => $this->caBundle]];
+    }
+
+    private function caBundleIsPem(): bool
+    {
+        return str_contains((string) $this->caBundle, '-----BEGIN CERTIFICATE-----');
     }
 
     /**

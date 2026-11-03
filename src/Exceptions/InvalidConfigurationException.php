@@ -27,4 +27,9 @@ class InvalidConfigurationException extends LogicException implements ProxmoxExc
     {
         return new self("Proxmox connection [{$connection}] is not configured in proxmox.connections.");
     }
+
+    public static function caBundleBlobUnsupported(string $connection): self
+    {
+        return new self("The CA certificate for connection [{$connection}] needs cURL 7.77 or newer. Use a CA file path instead.");
+    }
 }

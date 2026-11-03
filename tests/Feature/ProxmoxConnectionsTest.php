@@ -102,6 +102,57 @@ it('casts environment strings in connection configuration', function () {
     ]);
 });
 
+it('verifies TLS with a configured CA file path', function () {
+    config()->set('proxmox.connections.default.ca_bundle', '/etc/ssl/proxmox-ca.pem');
+
+    $options = [];
+    Http::fake(function (Request $request, array $sent) use (&$options) {
+        $options = $sent;
+
+        return Http::response(['data' => []]);
+    });
+
+    Proxmox::nodes();
+
+    expect($options['verify'])->toBe('/etc/ssl/proxmox-ca.pem')
+        ->and(app(ProxmoxClient::class)->__debugInfo()['caBundle'])->toBe('/etc/ssl/proxmox-ca.pem');
+});
+
+it('verifies TLS with an inline PEM certificate', function () {
+    $pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----";
+    config()->set('proxmox.connections.default.ca_bundle', $pem);
+
+    $options = [];
+    Http::fake(function (Request $request, array $sent) use (&$options) {
+        $options = $sent;
+
+        return Http::response(['data' => []]);
+    });
+
+    Proxmox::nodes();
+
+    expect($options['verify'])->toBeTrue()
+        ->and($options['curl'][CURLOPT_CAINFO_BLOB])->toBe($pem)
+        ->and(print_r(app(ProxmoxClient::class), true))->not->toContain('MIIB')->toContain('[PEM certificate]');
+});
+
+it('ignores the CA bundle when TLS verification is disabled', function () {
+    config()->set('proxmox.connections.default.verify_ssl', false);
+    config()->set('proxmox.connections.default.ca_bundle', '/etc/ssl/proxmox-ca.pem');
+
+    $options = [];
+    Http::fake(function (Request $request, array $sent) use (&$options) {
+        $options = $sent;
+
+        return Http::response(['data' => []]);
+    });
+
+    Proxmox::nodes();
+
+    expect($options['verify'])->toBeFalse()
+        ->and($options)->not->toHaveKey('curl');
+});
+
 it('keeps the API token secret out of debug output', function () {
     $output = print_r(app(ProxmoxClient::class), true);
 

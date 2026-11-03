@@ -35,6 +35,7 @@ return [
             'timeout' => (int) env('PROXMOX_TIMEOUT', 30),
             'connect_timeout' => (int) env('PROXMOX_CONNECT_TIMEOUT', 10),
             'verify_ssl' => (bool) env('PROXMOX_VERIFY_SSL', true),
+            'ca_bundle' => env('PROXMOX_CA_BUNDLE'),
             'retry' => [
                 'times' => (int) env('PROXMOX_RETRY_TIMES', 0),
                 'sleep' => (int) env('PROXMOX_RETRY_SLEEP', 100),
