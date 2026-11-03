@@ -1,8 +1,24 @@
 <?php
 
 declare(strict_types=1);
+use Proxmox\Models\Cluster;
+use Proxmox\Models\Node;
+use Proxmox\Models\VirtualMachine;
 
 return [
+
+    /*
+    |--------------------------------------------------------------------------
+    | Package Mode
+    |--------------------------------------------------------------------------
+    |
+    | "api" reads connections from this file and needs no database.
+    | "inventory" reads clusters from the proxmox_clusters table and enables
+    | the inventory models. Run "php artisan proxmox:install" to switch.
+    |
+    */
+
+    'mode' => env('PROXMOX_MODE', 'api'),
 
     /*
     |--------------------------------------------------------------------------
@@ -11,6 +27,7 @@ return [
     |
     | The connection used by the Proxmox facade and by resolving the
     | Proxmox\Proxmox class. Use Proxmox::connection('name') for others.
+    | In inventory mode this is the name of a cluster in the database.
     |
     */
 
@@ -21,8 +38,9 @@ return [
     | Proxmox Connections
     |--------------------------------------------------------------------------
     |
-    | Each connection authenticates with an API token. GET requests are
-    | retried "retry.times" extra times on connection failures only.
+    | Used in api mode only. Each connection authenticates with an API token.
+    | GET requests are retried "retry.times" extra times on connection
+    | failures only. "ca_bundle" is a CA file path or PEM certificate.
     |
     */
 
@@ -42,6 +60,22 @@ return [
             ],
         ],
 
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Models
+    |--------------------------------------------------------------------------
+    |
+    | Used in inventory mode. Extend the package models and register them
+    | here to add relations or behavior in your application.
+    |
+    */
+
+    'models' => [
+        'cluster' => Cluster::class,
+        'node' => Node::class,
+        'virtual_machine' => VirtualMachine::class,
     ],
 
 ];

@@ -9,6 +9,7 @@ use Illuminate\Contracts\Container\Container;
 use Illuminate\Foundation\Console\AboutCommand;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Support\ServiceProvider;
+use Throwable;
 
 class ProxmoxServiceProvider extends ServiceProvider
 {
@@ -40,11 +41,32 @@ class ProxmoxServiceProvider extends ServiceProvider
             __DIR__.'/../config/proxmox.php' => config_path('proxmox.php'),
         ], ['proxmox', 'proxmox-config']);
 
+        $this->publishesMigrations([
+            __DIR__.'/../database/migrations' => database_path('migrations'),
+        ], 'proxmox-migrations');
+
         if (class_exists(AboutCommand::class)) {
             AboutCommand::add('Proxmox', fn (): array => [
+                'Mode' => config('proxmox.mode'),
                 'Default connection' => $this->app->make(ProxmoxManager::class)->getDefaultConnection(),
-                'Connections' => implode(', ', array_keys((array) config('proxmox.connections', []))),
+                'Connections' => $this->connectionNames(),
             ]);
+        }
+    }
+
+    /**
+     * Connection names for "php artisan about", without secrets.
+     */
+    protected function connectionNames(): string
+    {
+        if (! Inventory::enabled()) {
+            return implode(', ', array_keys((array) config('proxmox.connections', [])));
+        }
+
+        try {
+            return Inventory::clusterModel()::query()->orderBy('name')->pluck('name')->implode(', ');
+        } catch (Throwable) {
+            return 'Unavailable (run the inventory migrations)';
         }
     }
 }

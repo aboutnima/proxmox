@@ -10,7 +10,8 @@ use Illuminate\Support\Traits\ForwardsCalls;
 use Proxmox\Exceptions\InvalidConfigurationException;
 
 /**
- * Resolves and caches one Proxmox client per configured connection.
+ * Resolves and caches one Proxmox client per connection: from config in api
+ * mode, or from the proxmox_clusters table in inventory mode.
  *
  * @mixin Proxmox
  */
@@ -91,6 +92,16 @@ class ProxmoxManager
      */
     protected function resolve(string $name): Proxmox
     {
+        if (Inventory::enabled()) {
+            $cluster = Inventory::clusterModel()::query()->where('name', $name)->first();
+
+            if ($cluster === null) {
+                throw InvalidConfigurationException::clusterNotFound($name);
+            }
+
+            return Proxmox::fromConfig($this->http, $cluster->toConnectionConfig(), $name);
+        }
+
         $config = $this->config->get("proxmox.connections.{$name}");
 
         if (! is_array($config)) {

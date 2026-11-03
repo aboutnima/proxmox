@@ -86,6 +86,8 @@ readonly class VirtualMachines
      *     ...
      * }  $configuration
      *
+     * @phpstan-param array<string, mixed> $configuration Values are validated at runtime.
+     *
      * @throws ConnectionException
      * @throws InvalidArgumentException
      * @throws InvalidConfigurationException
