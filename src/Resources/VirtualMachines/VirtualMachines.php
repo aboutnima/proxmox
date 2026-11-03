@@ -83,7 +83,7 @@ readonly class VirtualMachines
      *     sshkeys?: string,
      *     serial0?: string,
      *     vga?: string,
-     *     ...<string, mixed>
+     *     ...
      * }  $configuration
      *
      * @throws ConnectionException
