@@ -51,6 +51,16 @@ class ProxmoxManager
     }
 
     /**
+     * Build and cache a connection from a runtime configuration array.
+     *
+     * @param  array<array-key, mixed>  $config
+     */
+    public function connectUsing(string $name, array $config): Proxmox
+    {
+        return $this->connections[$name] = Proxmox::fromConfig($this->http, $config, $name);
+    }
+
+    /**
      * Forget a resolved connection so it is rebuilt from config on next use.
      */
     public function purge(?string $name = null): void

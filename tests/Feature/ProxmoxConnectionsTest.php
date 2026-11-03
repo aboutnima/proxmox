@@ -153,6 +153,22 @@ it('ignores the CA bundle when TLS verification is disabled', function () {
         ->and($options)->not->toHaveKey('curl');
 });
 
+it('builds runtime connections with connectUsing', function () {
+    Http::fake(['*' => Http::response(['data' => []])]);
+
+    $client = Proxmox::connectUsing('runtime', [
+        'url' => 'https://runtime.example.test:8006/api2/json',
+        'api_token_id' => 'runtime@pve!app',
+        'api_token_secret' => 'runtime-secret',
+    ]);
+
+    expect(Proxmox::connection('runtime'))->toBe($client);
+
+    $client->nodes();
+
+    Http::assertSent(fn (Request $request): bool => str_starts_with($request->url(), 'https://runtime.example.test'));
+});
+
 it('keeps the API token secret out of debug output', function () {
     $output = print_r(app(ProxmoxClient::class), true);
 
