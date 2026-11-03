@@ -49,7 +49,7 @@ it('merges the package config', function () {
 it('registers the package commands', function () {
     $commands = array_keys(Artisan::all());
 
-    expect($commands)->toContain('proxmox:install', 'proxmox:create-cluster');
+    expect($commands)->toContain('proxmox:install', 'proxmox:create-cluster', 'proxmox:sync-nodes');
 });
 
 it('publishes the inventory migrations under the proxmox-migrations tag', function () {

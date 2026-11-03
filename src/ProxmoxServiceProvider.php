@@ -11,6 +11,7 @@ use Illuminate\Http\Client\Factory;
 use Illuminate\Support\ServiceProvider;
 use Proxmox\Console\Commands\CreateClusterCommand;
 use Proxmox\Console\Commands\InstallCommand;
+use Proxmox\Console\Commands\SyncNodesCommand;
 use Throwable;
 
 class ProxmoxServiceProvider extends ServiceProvider
@@ -50,6 +51,7 @@ class ProxmoxServiceProvider extends ServiceProvider
         $this->commands([
             InstallCommand::class,
             CreateClusterCommand::class,
+            SyncNodesCommand::class,
         ]);
 
         if (class_exists(AboutCommand::class)) {

@@ -7,8 +7,13 @@ namespace Proxmox\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Proxmox\Exceptions\InvalidConfigurationException;
+use Proxmox\Exceptions\ProxmoxException;
+use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Inventory;
 use Proxmox\Proxmox;
 use Proxmox\ProxmoxManager;
@@ -129,6 +134,61 @@ class Cluster extends Model
     public function client(): Proxmox
     {
         return app(ProxmoxManager::class)->connection($this->name);
+    }
+
+    /**
+     * Fetch this cluster's nodes from Proxmox and update the proxmox_nodes rows.
+     *
+     * New nodes are added and existing nodes get their current status. Nodes
+     * that Proxmox no longer lists are kept, because virtual machines may still
+     * reference them, and are marked with the "missing" status.
+     *
+     * @return array{added: list<string>, updated: list<string>, unchanged: list<string>, missing: list<string>}
+     *
+     * @throws ProxmoxException
+     * @throws RequestException
+     * @throws ConnectionException
+     */
+    public function syncNodes(): array
+    {
+        $fetched = [];
+
+        foreach ($this->client()->nodes() as $node) {
+            if (! is_string($name = $node['node'] ?? null) || $name === '') {
+                throw UnexpectedResponseException::expectedNode();
+            }
+
+            $fetched[$name] = is_string($status = $node['status'] ?? null) ? $status : null;
+        }
+
+        return DB::connection($this->getConnectionName())->transaction(function () use ($fetched): array {
+            $result = ['added' => [], 'updated' => [], 'unchanged' => [], 'missing' => []];
+            $existing = $this->nodes()->get()->keyBy('name');
+
+            foreach ($fetched as $name => $status) {
+                $node = $existing->get($name);
+
+                if ($node === null) {
+                    $this->nodes()->create(['name' => $name, 'status' => $status]);
+                    $result['added'][] = $name;
+                } elseif ($node->status !== $status) {
+                    $node->update(['status' => $status]);
+                    $result['updated'][] = $name;
+                } else {
+                    $result['unchanged'][] = $name;
+                }
+            }
+
+            foreach ($existing->reject(fn (Node $node): bool => array_key_exists($node->name, $fetched)) as $node) {
+                if ($node->status !== Node::MISSING) {
+                    $node->update(['status' => Node::MISSING]);
+                }
+
+                $result['missing'][] = $node->name;
+            }
+
+            return $result;
+        });
     }
 
     /**

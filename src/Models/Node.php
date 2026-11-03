@@ -25,6 +25,11 @@ use Proxmox\Resources\Nodes\Node as NodeResource;
  */
 class Node extends Model
 {
+    /**
+     * Status of a node that Proxmox no longer lists for its cluster.
+     */
+    public const string MISSING = 'missing';
+
     protected $table = 'proxmox_nodes';
 
     protected $fillable = [
