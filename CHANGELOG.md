@@ -33,6 +33,7 @@
 
 ### Fixed
 
+- Simplified the VM creation array-shape PHPDoc for PhpStorm compatibility while retaining typed keys and native parameter passthrough.
 - `delete()` sends parameters as query parameters, because Proxmox ignores DELETE request bodies.
 - The API token secret is hidden from `var_dump()`, `print_r()`, and stack traces.
 

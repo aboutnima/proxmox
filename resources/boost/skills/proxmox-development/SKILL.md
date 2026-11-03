@@ -39,7 +39,7 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 
 ### 3. Create VMs and track tasks
 
-- Create with `node($name)->virtualMachines()->create($configuration, importTimeout: 300)`. Pass an array; its PHPDoc declares the keys and value types for IDE completion and allows additional native QEMU fields.
+- Create with `node($name)->virtualMachines()->create($configuration, importTimeout: 300)`. Pass an array; its PHPDoc declares common keys and value types for IDE completion. Additional native QEMU fields are passed through to Proxmox.
 - Supply `vmid` (required), `name`, `sockets`, `cores` (per socket), `memory` (MiB), `storage`, and `disk` (GiB) as needed. Get a free ID with `Proxmox::nextVirtualMachineId()`.
 - Use `bridge` and either `ip: 'dhcp'` or a static `ip` with integer `prefix` and optional `gateway`. An IP needs `storage` plus `bridge` (or native `net0`) and adds a Cloud-Init drive.
 - Use `user`, `password`, and `ssh_key` for guest Cloud-Init credentials. `ssh_key` takes unencoded OpenSSH public key text, with newlines between multiple keys; the package encodes it.
