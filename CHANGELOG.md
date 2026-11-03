@@ -4,16 +4,27 @@
 
 ### Added
 
+- Package modes selected by `php artisan proxmox:install`: `api` (connections from `.env`, no database) and `inventory` (clusters, nodes, and VMs stored in the database). Set with `PROXMOX_MODE`.
+- Inventory migration `create_proxmox_tables` (`proxmox_clusters`, `proxmox_nodes`, `proxmox_virtual_machines`) published by the installer or the `proxmox-migrations` tag. The installer never publishes it twice.
+- `Proxmox\Models\Cluster`, `Node`, and `VirtualMachine` Eloquent models, overridable through `proxmox.models`. Cluster API token secrets are encrypted and hidden.
+- `php artisan proxmox:create-cluster` to add clusters interactively or move `.env` connections with `--from-env`.
+- `php artisan proxmox:sync-nodes` and `Cluster::syncNodes()` to add and update inventory nodes from Proxmox. Prompts for clusters, or accepts names or `--all` for scheduling. Nodes no longer listed are kept with the `missing` status.
+- `Proxmox\Concerns\HasVirtualMachines` trait for models that own inventory VMs through a polymorphic `owner` relation.
+- Inventory `VirtualMachine` records drive Proxmox: `create()` creates the VM on the given `node` with the cluster's next free VMID (passing `vmid` throws; a taken ID is retried up to 3 times), `delete()` stops and destroys it, and `start()`, `shutdown()`, `restart()`, `pause()`, `hibernate()`, `resume()`, `stop()`, `reset()`, `setCpu()`, `setCores()`, `setMemory()`, and `growDisk()` run on the live VM. `VirtualMachine::withoutProxmox()` changes records only.
+- `delete($purge = true)` on the VM resource destroys a VM and its unreferenced disks.
+- In inventory mode, `Proxmox::connection($name)` resolves database clusters, and cached clients are rebuilt when a cluster changes.
+- `Proxmox::connectUsing($name, $config)` for runtime connections.
+- `ca_bundle` connection option and `PROXMOX_CA_BUNDLE`, accepting a CA file path or PEM certificate.
 - Multiple connections through `Proxmox::connection('name')`, backed by `Proxmox\ProxmoxManager`.
 - `Task` resource with `status()`, `isRunning()`, `wait()`, and `log()`, plus `Proxmox::task($upid)` and `node()->task($upid)`.
 - Node-scoped VM operations with `virtualMachines()->all()` for array listings and `virtualMachines()->create($configuration)` for creation, with documented array keys for IDE completion.
 - `Proxmox::nextVirtualMachineId()` for requesting a free VM ID.
-- `virtualMachine($vmid)->config()`, plus `setCpu($cores, $sockets)`, `setMemory($megabytes)`, and `growDisk($disk, $gigabytes)`. Each change returns a `Task`.
+- `virtualMachine($vmid)->config()`, plus `setCpu($cores, $sockets)`, `setCores($cores)`, `setMemory($megabytes)`, and `growDisk($disk, $gigabytes)`. Each change returns a `Task`.
 - VM power operations: `start()`, `shutdown()`, `restart()`, `pause()`, `hibernate()`, `resume()`, `stop()`, and `reset()`. Each returns a `Task`.
 - Fetched VM snapshots with `toArray()`, JSON serialization, and `refresh()`. VM objects retain `status()`, `config()`, `setCpu()`, `setMemory()`, and `growDisk()` for management.
 - `PROXMOX_CONNECT_TIMEOUT`, `PROXMOX_RETRY_TIMES`, and `PROXMOX_RETRY_SLEEP` settings. Only GET requests retry, and only after connection failures.
 - Package exceptions implementing `Proxmox\Exceptions\ProxmoxException`.
-- Connection details in `php artisan about`.
+- Connection details and the package mode in `php artisan about`.
 
 ### Changed
 
