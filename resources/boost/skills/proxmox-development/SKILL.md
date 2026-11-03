@@ -19,12 +19,14 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 
 ### 1. Install and configure
 
-- Install with `composer require aboutnima/proxmox`.
-- Optionally publish configuration with `php artisan vendor:publish --tag=proxmox-config`.
-- Set `PROXMOX_URL` to the Proxmox API base URL, including `/api2/json`.
+- Install with `composer require aboutnima/proxmox`, then run `php artisan proxmox:install` and choose a mode (or pass `--mode=api|inventory`).
+- `api` mode (default) reads connections from `.env` and `config/proxmox.php` and needs no database.
+- In api mode, set `PROXMOX_URL` to the Proxmox API base URL, including `/api2/json`.
 - Set `PROXMOX_API_TOKEN_ID` and `PROXMOX_API_TOKEN_SECRET` for API-token authentication.
-- Optional settings: `PROXMOX_TIMEOUT` (30), `PROXMOX_CONNECT_TIMEOUT` (10), `PROXMOX_VERIFY_SSL` (true), `PROXMOX_RETRY_TIMES` (0), and `PROXMOX_RETRY_SLEEP` (100 ms). Retries apply only to GET requests that hit connection failures.
-- For several Proxmox servers, add entries under `connections` in `config/proxmox.php` and call `Proxmox::connection('name')`. `PROXMOX_CONNECTION` selects the default.
+- Optional settings: `PROXMOX_TIMEOUT` (30), `PROXMOX_CONNECT_TIMEOUT` (10), `PROXMOX_VERIFY_SSL` (true), `PROXMOX_CA_BUNDLE` (CA file path or PEM certificate), `PROXMOX_RETRY_TIMES` (0), and `PROXMOX_RETRY_SLEEP` (100 ms). Retries apply only to GET requests that hit connection failures.
+- For several Proxmox servers, add entries under `connections` in `config/proxmox.php` and call `Proxmox::connection('name')`. `PROXMOX_CONNECTION` selects the default. Use `Proxmox::connectUsing($name, $config)` for runtime connections.
+- `inventory` mode (`php artisan proxmox:install --mode=inventory --migrate`) publishes the `create_proxmox_tables` migration for `proxmox_clusters`, `proxmox_nodes`, and `proxmox_virtual_machines`, and reads clusters only from the database. Add clusters with `php artisan proxmox:create-cluster {name}`, or move a `.env` connection with `php artisan proxmox:create-cluster {name} --from-env [--connection=default]`. Keep `proxmox_nodes` current with `php artisan proxmox:sync-nodes [cluster...] [--all]` (schedule `--all`) or `$cluster->syncNodes()`; nodes Proxmox no longer lists are kept with the `missing` status.
+- In inventory mode, `Proxmox::connection($name)` resolves the cluster named `$name`. Add `Proxmox\Concerns\HasVirtualMachines` to owner models such as `User`; `Proxmox\Models\VirtualMachine` has a polymorphic `owner`, `cluster`, `node`, and `resource()` for the live API object.
 
 ### 2. Read nodes and VMs
 
@@ -55,7 +57,7 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 - Start and control VM power with `start()`, `shutdown()`, `restart()`, `pause()`, `hibernate()`, `resume()`, `stop()`, and `reset()`. Each returns a `Task`.
 - `shutdown()` and `restart()` request a graceful guest shutdown; either can take an optional timeout in seconds. `stop()` removes power immediately and `reset()` is an immediate hardware reset, so both can cause data loss.
 - `pause()` keeps state in memory; `hibernate()` saves state to disk and requires VM state storage. `resume()` resumes a paused or hibernated VM.
-- Set CPU with `virtualMachine($id)->setCpu(cores: 4, sockets: 1)`. Cores are per socket; omit `sockets` to keep the current count.
+- Set CPU with `virtualMachine($id)->setCpu(cores: 4, sockets: 1)`. Cores are per socket; omit `sockets` to keep the current count. `setCores($cores)` is shorthand for `setCpu(cores: $cores)`.
 - Set memory in MiB with `virtualMachine($id)->setMemory(8192)`.
 - Grow an existing disk by GiB with `virtualMachine($id)->growDisk('scsi0', 10)`. It does not attach a new disk, and disks cannot shrink.
 - Each method validates positive integers and returns a `Task`.
@@ -72,7 +74,8 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 ## References
 
 - `README.md` for install and usage examples.
-- `config/proxmox.php` for connection, timeout, retry, and TLS settings.
+- `config/proxmox.php` for the mode, connection, timeout, retry, TLS settings, and inventory model classes.
+- `src/Models/` for the inventory `Cluster`, `Node`, and `VirtualMachine` models, and `src/Concerns/HasVirtualMachines.php` for owners.
 - `src/Facades/Proxmox.php` for the facade methods.
 - `src/Resources/Nodes/Node.php` for node status, VM operations, and image listings.
 - `src/Resources/VirtualMachines/` for fetched VMs, CPU/memory updates, disk resizing, listing and creation operations, creation key types, and VM configuration.
@@ -126,6 +129,29 @@ $task = Proxmox::node('pve1')->virtualMachines()->create([
 $task->wait();
 ```
 
+In inventory mode, store clusters and manage VMs through the `VirtualMachine` model. Creating a record creates the VM on Proxmox; deleting it stops and destroys the VM:
+
+```php
+use Proxmox\Models\Cluster;
+
+$cluster = Cluster::query()->where('name', 'eu-1')->firstOrFail();
+$node = $cluster->nodes()->firstOrCreate(['name' => 'pve1']);
+
+$vm = $user->virtualMachines()->create([
+    'node' => $node, // Or 'cluster' => 'eu-1', 'node' => 'pve1'.
+    'name' => 'web',
+    'cores' => 2,
+    'memory' => 2048,
+]);
+$vm->creationTask()?->wait();
+
+$vm->start()->wait();
+$vm->setMemory(4096);
+$vm->delete();
+```
+
+Non-column keys are sent to Proxmox only. Do not pass `vmid` or call `Proxmox::nextVirtualMachineId()` here: the model uses the next free ID of the node's cluster, and the facade uses the default connection, which is not a cluster in inventory mode. Use `VirtualMachine::withoutProxmox(fn () => ...)` to record existing VMs without calling Proxmox.
+
 In application tests, fake the Laravel HTTP client:
 
 ```php
@@ -141,7 +167,11 @@ expect(Proxmox::node('pve1')->virtualMachines()->all())->toBe([['vmid' => 101]])
 - Do not pass an absolute URL as an endpoint; the client accepts only relative API paths.
 - Do not use QEMU VM methods for LXC containers.
 - Do not call `Proxmox::virtualMachines()`; VM listings require `node($name)->virtualMachines()->all()`.
-- Do not disable TLS verification to work around certificate problems; configure a trusted certificate.
+- Do not disable TLS verification to work around certificate problems; configure a trusted certificate or `ca_bundle`.
+- Do not expect `config/proxmox.php` connections to work in inventory mode; create database clusters instead.
+- Do not pass API token secrets as command-line options or log `Cluster` secrets; `api_token_secret` is encrypted with `APP_KEY` and hidden.
+- Do not identify an inventory VM by VMID alone; Proxmox reuses VMIDs, so use the `proxmox_virtual_machines` row ID.
+- Do not run `vendor:publish --tag=proxmox-migrations` repeatedly; rerun `php artisan proxmox:install`, which skips migrations that are already published.
 - Do not treat a create, `setCpu()`, `setMemory()`, or `growDisk()` result as a string UPID or a running VM. Use the returned `Task`.
 - Do not use `growDisk()` to attach a new disk or to set an absolute size; it adds GiB to an existing disk.
 - Do not append `throw()` or `json('data')` to resource results; they belong to raw HTTP responses.
