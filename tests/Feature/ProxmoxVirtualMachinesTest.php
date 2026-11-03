@@ -145,6 +145,63 @@ it('sets VM memory in MiB and returns the configuration task', function () {
         && $request->body() === 'memory=8192');
 });
 
+it('runs VM power operations and returns their task', function (Closure $operation, string $path, string $body) {
+    Http::fake([
+        API_URL.'/nodes/pve1/qemu/101/status/current' => Http::response(['data' => ['status' => 'running']]),
+        API_URL.'/nodes/pve1/qemu/101/status/'.$path => Http::response(['data' => 'UPID:pve1:power']),
+    ]);
+
+    $vm = Proxmox::node('pve1')->virtualMachine(101);
+    $task = $operation($vm);
+
+    expect($task)->toBeInstanceOf(Task::class)
+        ->and($task->node)->toBe('pve1')
+        ->and($task->upid)->toBe('UPID:pve1:power');
+
+    Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
+        && $request->url() === API_URL.'/nodes/pve1/qemu/101/status/'.$path
+        && $request->body() === $body);
+    Http::assertSentCount(2);
+})->with([
+    'start' => [fn (VirtualMachine $vm): Task => $vm->start(), 'start', ''],
+    'graceful shutdown' => [fn (VirtualMachine $vm): Task => $vm->shutdown(), 'shutdown', ''],
+    'restart' => [fn (VirtualMachine $vm): Task => $vm->restart(), 'reboot', ''],
+    'pause' => [fn (VirtualMachine $vm): Task => $vm->pause(), 'suspend', 'todisk=0'],
+    'hibernate' => [fn (VirtualMachine $vm): Task => $vm->hibernate(), 'suspend', 'todisk=1'],
+    'stop' => [fn (VirtualMachine $vm): Task => $vm->stop(), 'stop', ''],
+    'reset' => [fn (VirtualMachine $vm): Task => $vm->reset(), 'reset', ''],
+    'resume' => [fn (VirtualMachine $vm): Task => $vm->resume(), 'resume', ''],
+]);
+
+it('passes an optional timeout to graceful shutdown and restart', function (Closure $operation, string $path) {
+    Http::fake([
+        API_URL.'/nodes/pve1/qemu/101/status/current' => Http::response(['data' => ['status' => 'running']]),
+        API_URL.'/nodes/pve1/qemu/101/status/'.$path => Http::response(['data' => 'UPID:pve1:power']),
+    ]);
+
+    $operation(Proxmox::node('pve1')->virtualMachine(101));
+
+    Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
+        && $request->url() === API_URL.'/nodes/pve1/qemu/101/status/'.$path
+        && $request->body() === 'timeout=30');
+})->with([
+    'shutdown' => [fn (VirtualMachine $vm): Task => $vm->shutdown(timeout: 30), 'shutdown'],
+    'restart' => [fn (VirtualMachine $vm): Task => $vm->restart(timeout: 30), 'reboot'],
+]);
+
+it('rejects negative VM operation timeouts before sending the operation', function (Closure $operation) {
+    Http::fake(['*/status/current' => Http::response(['data' => ['status' => 'running']])]);
+
+    expect(fn () => $operation(Proxmox::node('pve1')->virtualMachine(101)))
+        ->toThrow(InvalidArgumentException::class, 'timeout');
+
+    Http::assertSentCount(1);
+    Http::assertNotSent(fn (Request $request): bool => $request->method() === 'POST');
+})->with([
+    'shutdown' => [fn (VirtualMachine $vm): Task => $vm->shutdown(timeout: -1)],
+    'restart' => [fn (VirtualMachine $vm): Task => $vm->restart(timeout: -1)],
+]);
+
 it('validates CPU and memory values before sending a configuration request', function (Closure $change, string $message) {
     Http::fake(['*/status/current' => Http::response(['data' => ['status' => 'running']])]);
 

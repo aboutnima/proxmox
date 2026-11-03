@@ -52,6 +52,9 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 
 ### 4. Change existing VMs
 
+- Start and control VM power with `start()`, `shutdown()`, `restart()`, `pause()`, `hibernate()`, `resume()`, `stop()`, and `reset()`. Each returns a `Task`.
+- `shutdown()` and `restart()` request a graceful guest shutdown; either can take an optional timeout in seconds. `stop()` removes power immediately and `reset()` is an immediate hardware reset, so both can cause data loss.
+- `pause()` keeps state in memory; `hibernate()` saves state to disk and requires VM state storage. `resume()` resumes a paused or hibernated VM.
 - Set CPU with `virtualMachine($id)->setCpu(cores: 4, sockets: 1)`. Cores are per socket; omit `sockets` to keep the current count.
 - Set memory in MiB with `virtualMachine($id)->setMemory(8192)`.
 - Grow an existing disk by GiB with `virtualMachine($id)->growDisk('scsi0', 10)`. It does not attach a new disk, and disks cannot shrink.
@@ -89,6 +92,15 @@ $runningVms = collect($vms)->where('status', 'running')->values()->all();
 $vm = Proxmox::node('pve1')->virtualMachine(101);
 $data = $vm->toArray();
 $config = $vm->config();
+
+$vm->start()->wait();
+$vm->shutdown(timeout: 60)->wait();
+$vm->restart()->wait();
+$vm->pause()->wait();
+$vm->hibernate()->wait();
+$vm->resume()->wait();
+$vm->stop()->wait();
+$vm->reset()->wait();
 
 $vm->setCpu(cores: 4)->wait();
 $vm->setMemory(8192)->wait();

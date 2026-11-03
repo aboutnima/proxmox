@@ -105,6 +105,112 @@ class VirtualMachine implements Arrayable, JsonSerializable
     }
 
     /**
+     * Start the VM.
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function start(): Task
+    {
+        return $this->operate('start');
+    }
+
+    /**
+     * Gracefully shut down the VM through its guest operating system.
+     *
+     * @throws ConnectionException
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function shutdown(?int $timeout = null): Task
+    {
+        return $this->operate('shutdown', $this->timeoutParameters($timeout));
+    }
+
+    /**
+     * Gracefully reboot the VM. Pending VM configuration changes are applied.
+     *
+     * @throws ConnectionException
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function restart(?int $timeout = null): Task
+    {
+        return $this->operate('reboot', $this->timeoutParameters($timeout));
+    }
+
+    /**
+     * Pause the VM while keeping its state in memory.
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function pause(): Task
+    {
+        return $this->operate('suspend', ['todisk' => false]);
+    }
+
+    /**
+     * Suspend the VM to disk. The VM state storage must be configured.
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function hibernate(): Task
+    {
+        return $this->operate('suspend', ['todisk' => true]);
+    }
+
+    /**
+     * Immediately stop the VM, like removing its power.
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function stop(): Task
+    {
+        return $this->operate('stop');
+    }
+
+    /**
+     * Immediately reset the VM, like pressing its hardware reset button.
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function reset(): Task
+    {
+        return $this->operate('reset');
+    }
+
+    /**
+     * Resume a paused or hibernated VM.
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function resume(): Task
+    {
+        return $this->operate('resume');
+    }
+
+    /**
      * Set the CPU cores per socket, and optionally the socket count.
      *
      * Without CPU hotplug, Proxmox may keep the change pending until a running VM restarts.
@@ -185,6 +291,39 @@ class VirtualMachine implements Arrayable, JsonSerializable
         return new Task($this->client, $this->node, ResponseData::taskId(
             $this->client->post($this->path('config'), $parameters),
         ));
+    }
+
+    /**
+     * @param  array<string, bool|int>  $parameters
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    private function operate(string $operation, array $parameters = []): Task
+    {
+        return new Task($this->client, $this->node, ResponseData::taskId(
+            $this->client->post($this->path('status/'.$operation), $parameters),
+        ));
+    }
+
+    /**
+     * @return array{timeout?: int}
+     *
+     * @throws InvalidArgumentException
+     */
+    private function timeoutParameters(?int $timeout): array
+    {
+        if ($timeout === null) {
+            return [];
+        }
+
+        if ($timeout < 0) {
+            throw new InvalidArgumentException('timeout must be zero or a positive number of seconds.');
+        }
+
+        return ['timeout' => $timeout];
     }
 
     private function path(string $path): string

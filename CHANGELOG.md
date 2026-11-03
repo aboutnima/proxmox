@@ -9,6 +9,7 @@
 - Node-scoped VM operations with `virtualMachines()->all()` for array listings and `virtualMachines()->create($configuration)` for creation, with documented array keys for IDE completion.
 - `Proxmox::nextVirtualMachineId()` for requesting a free VM ID.
 - `virtualMachine($vmid)->config()`, plus `setCpu($cores, $sockets)`, `setMemory($megabytes)`, and `growDisk($disk, $gigabytes)`. Each change returns a `Task`.
+- VM power operations: `start()`, `shutdown()`, `restart()`, `pause()`, `hibernate()`, `resume()`, `stop()`, and `reset()`. Each returns a `Task`.
 - Fetched VM snapshots with `toArray()`, JSON serialization, and `refresh()`. VM objects retain `status()`, `config()`, `setCpu()`, `setMemory()`, and `growDisk()` for management.
 - `PROXMOX_CONNECT_TIMEOUT`, `PROXMOX_RETRY_TIMES`, and `PROXMOX_RETRY_SLEEP` settings. Only GET requests retry, and only after connection failures.
 - Package exceptions implementing `Proxmox\Exceptions\ProxmoxException`.

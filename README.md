@@ -120,6 +120,25 @@ $vm->refresh();                 // Fetches fresh data, updates the snapshot, ret
 
 HTTP 404 responses throw when selecting a VM. Node names and VM IDs are validated before requesting their data. VM IDs must be integers (or integer strings) between 100 and 999999999.
 
+### Operate a QEMU Virtual Machine
+
+Power operations return a `Task`. Wait for it when the operation must finish before continuing:
+
+```php
+$vm = Proxmox::node('pve1')->virtualMachine(101);
+
+$vm->start()->wait();
+$vm->shutdown(timeout: 60)->wait(); // Graceful guest shutdown; timeout is optional and in seconds.
+$vm->restart()->wait();             // Graceful reboot; applies pending configuration changes.
+$vm->pause()->wait();                // Pause while keeping state in memory.
+$vm->hibernate()->wait();            // Save state to disk; requires VM state storage.
+$vm->resume()->wait();               // Resume a paused or hibernated VM.
+$vm->stop()->wait();                 // Immediate stop, like removing power.
+$vm->reset()->wait();                // Immediate reset, like pressing the reset button.
+```
+
+`shutdown()` and `restart()` ask the guest to shut down gracefully and optionally accept a timeout in seconds. `stop()` and `reset()` are abrupt operations that can cause data loss. `hibernate()` requires VM state storage and the corresponding Proxmox permissions.
+
 ### Change CPU, Memory, and Disk Size
 
 Each method sends one change and returns a `Task`:
