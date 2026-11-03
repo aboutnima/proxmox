@@ -4,10 +4,9 @@ declare(strict_types=1);
 
 namespace Proxmox\Resources\VirtualMachines;
 
-use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
-use Illuminate\Support\Collection;
+use Illuminate\Support\Arr;
 use InvalidArgumentException;
 use Proxmox\Exceptions\InvalidConfigurationException;
 use Proxmox\Exceptions\TaskFailedException;
@@ -16,41 +15,76 @@ use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Proxmox;
 use Proxmox\Resources\Tasks\Task;
 use Proxmox\Support\Identifier;
-use Proxmox\Support\ResourceQuery;
 use Proxmox\Support\ResponseData;
 
 /**
- * QEMU virtual machines on a single node.
+ * QEMU VM listing and creation operations on a single node.
  */
-class VirtualMachines extends ResourceQuery
+readonly class VirtualMachines
 {
-    public readonly string $node;
+    public string $node;
 
     /**
      * @throws InvalidArgumentException
      */
-    public function __construct(private readonly Proxmox $client, string $node)
+    public function __construct(private Proxmox $client, string $node)
     {
         $this->node = Identifier::node($node);
     }
 
     /**
-     * Start a fluent VM definition that is sent with create().
+     * Fetch the VM listing as an array.
      *
-     * @throws InvalidArgumentException
+     * @return list<array<array-key, mixed>>
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
      */
-    public function make(int|string $vmid): PendingVirtualMachine
+    public function all(): array
     {
-        return new PendingVirtualMachine($this, $vmid);
+        return ResponseData::list($this->client->get('nodes/'.rawurlencode($this->node).'/qemu'));
     }
 
     /**
-     * Create a virtual machine using readable fields or native API parameters.
+     * Create a VM using readable fields or native API parameters.
      *
-     * With "image" and "disk", the import task is awaited and the returned task
-     * is the follow-up disk resize.
+     * Memory is in MiB and disk is in GiB. Additional native QEMU keys are
+     * passed through. With image and disk, await import and return the resize task.
      *
-     * @param  array<string, mixed>|Arrayable<string, mixed>  $configuration
+     * @param  array{
+     *     vmid: int|string,
+     *     name?: string,
+     *     sockets?: int,
+     *     cores?: int,
+     *     memory?: int,
+     *     disk?: int,
+     *     storage?: string,
+     *     image?: string,
+     *     bridge?: string,
+     *     ip?: string,
+     *     prefix?: int,
+     *     gateway?: string,
+     *     user?: string,
+     *     password?: string,
+     *     ssh_key?: string,
+     *     start?: bool|int,
+     *     ostype?: string,
+     *     onboot?: bool|int,
+     *     boot?: string,
+     *     scsihw?: string,
+     *     scsi0?: string,
+     *     net0?: string,
+     *     ide2?: string,
+     *     ipconfig0?: string,
+     *     ciuser?: string,
+     *     cipassword?: string,
+     *     sshkeys?: string,
+     *     serial0?: string,
+     *     vga?: string,
+     *     ...<string, mixed>
+     * }  $configuration
      *
      * @throws ConnectionException
      * @throws InvalidArgumentException
@@ -60,17 +94,15 @@ class VirtualMachines extends ResourceQuery
      * @throws TaskTimeoutException
      * @throws UnexpectedResponseException
      */
-    public function create(array|Arrayable $configuration, int $importTimeout = 300): Task
+    public function create(array $configuration, int $importTimeout = 300): Task
     {
-        $configuration = is_array($configuration) ? $configuration : $configuration->toArray();
+        $vmid = Identifier::vmid(Arr::get($configuration, 'vmid'));
         $parameters = VirtualMachineConfiguration::toApiParameters($configuration);
         $disk = $configuration['disk'] ?? null;
 
         if (! array_key_exists('image', $configuration) || ! is_int($disk)) {
             return $this->submit($parameters);
         }
-
-        $vmid = Identifier::vmid($configuration['vmid'] ?? null);
 
         if ($importTimeout < 1) {
             throw new InvalidArgumentException('importTimeout must be a positive number of seconds.');
@@ -83,11 +115,6 @@ class VirtualMachines extends ResourceQuery
         $this->submit($parameters)->wait($importTimeout);
 
         return (new VirtualMachine($this->client, $this->node, $vmid))->resize('scsi0', $disk.'G');
-    }
-
-    protected function fetch(): Collection
-    {
-        return ResponseData::list($this->client->get('nodes/'.rawurlencode($this->node).'/qemu'));
     }
 
     /**

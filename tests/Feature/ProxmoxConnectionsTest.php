@@ -37,7 +37,7 @@ it('resolves and caches named connections', function () {
         ->and($backup->getName())->toBe('backup')
         ->and(Proxmox::connection('backup'))->toBe($backup)
         ->and(Proxmox::connection())->not->toBe($backup)
-        ->and($backup->nodes()->pluck('node')->all())->toBe(['backup1']);
+        ->and(collect($backup->nodes())->pluck('node')->all())->toBe(['backup1']);
 
     Http::assertSent(fn (Request $request): bool => $request->url() === 'https://backup.example.test:8006/api2/json/nodes'
         && $request->hasHeader('Authorization', 'PVEAPIToken=backup@pve!package=backup-secret'));
@@ -52,7 +52,7 @@ it('forwards facade calls to the configured default connection', function () {
         ->and(Proxmox::getName())->toBe('backup')
         ->and(app(ProxmoxClient::class))->toBe(Proxmox::connection('backup'));
 
-    Proxmox::nodes()->all();
+    Proxmox::nodes();
 
     Http::assertSent(fn (Request $request): bool => str_starts_with($request->url(), 'https://backup.example.test'));
 });
@@ -118,7 +118,7 @@ it('retries GET requests after connection failures when configured', function ()
         ->push(['data' => [['node' => 'pve1']]]),
     ]);
 
-    expect(Proxmox::nodes()->pluck('node')->all())->toBe(['pve1']);
+    expect(collect(Proxmox::nodes())->pluck('node')->all())->toBe(['pve1']);
 });
 
 it('gives up after the configured number of GET retries', function () {
@@ -130,7 +130,7 @@ it('gives up after the configured number of GET retries', function () {
         ->push(['data' => []]),
     ]);
 
-    expect(fn () => Proxmox::nodes()->all())->toThrow(ConnectionException::class);
+    expect(fn () => Proxmox::nodes())->toThrow(ConnectionException::class);
 });
 
 it('does not retry HTTP error responses', function () {

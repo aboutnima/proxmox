@@ -54,7 +54,7 @@ Add more entries under `connections` in the published `config/proxmox.php`, then
 ```php
 use Proxmox\Facades\Proxmox;
 
-$nodes = Proxmox::connection('backup')->nodes()->all();
+$nodes = Proxmox::connection('backup')->nodes();
 ```
 
 Calls without `connection()` use the default connection. `php artisan about` lists the configured connections without secrets.
@@ -63,127 +63,106 @@ Calls without `connection()` use the default connection. `php artisan about` lis
 
 ### Nodes and Virtual Machines
 
+Listing methods fetch immediately and return plain arrays:
+
 ```php
 use Proxmox\Facades\Proxmox;
 
-$nodes = Proxmox::nodes()->all();
+$nodes = Proxmox::nodes();
 
-$onlineNode = Proxmox::nodes()->where('status', 'online')->first();
+$node = Proxmox::node('pve1');
+$vms = $node->virtualMachines()->all();
+```
 
-$vms = Proxmox::node('pve1')->virtualMachines()->all();
+`nodes()` lists nodes. `node($name)` selects a node context without sending a request. `virtualMachines()` returns node-scoped VM operations without making a request; `all()` fetches the listing as an array. An empty listing returns `[]`.
 
-$runningVm = Proxmox::node('pve1')->virtualMachines()
+Use Laravel collections when you need to filter, sort, or aggregate the fetched data. These operations reuse the data without further API requests:
+
+```php
+$onlineNode = collect($nodes)->where('status', 'online')->first();
+
+$runningVm = collect($vms)
     ->where('status', 'running')
     ->where('maxmem', '>=', 2147483648)
     ->first();
-```
 
-Virtual machine listings are scoped to the selected node with `node($name)->virtualMachines()`.
-
-Listings return a Laravel collection of attribute arrays from `all()` (`get()` is an alias). `first()` returns the first matching array or `null`. Queries are lazy and immutable: `where()`, `whereIn()`, and `whereNotIn()` return a new query, and filters run locally with Laravel collection comparisons rather than as API parameters. Supported `where()` operators are `=`, `==`, `===`, `!=`, `<>`, `!==`, `<`, `>`, `<=`, and `>=`.
-
-Common read-only collection methods can be called directly on a query. Each call fetches the listing once:
-
-```php
-$count = Proxmox::nodes()->count();
-$names = Proxmox::nodes()->pluck('node');
-$memory = Proxmox::node('pve1')->virtualMachines()->sum('maxmem');
-
-$vms = Proxmox::node('pve1')->virtualMachines()
-    ->when($onlyRunning, fn ($query) => $query->where('status', 'running'))
-    ->whereIn('vmid', [101, 102])
-    ->all();
-```
-
-The forwarded methods are `avg`, `contains`, `count`, `doesntContain`, `each`, `every`, `firstWhere`, `groupBy`, `isEmpty`, `isNotEmpty`, `keyBy`, `map`, `max`, `min`, `pluck`, `sole`, `sortBy`, `sortByDesc`, and `sum`. Register reusable filters as macros, for example in a service provider. Macros are shared by every listing:
-
-```php
-use Proxmox\Support\ResourceQuery;
-
-ResourceQuery::macro('running', function () {
-    return $this->where('status', 'running');
-});
-
-$running = Proxmox::node('pve1')->virtualMachines()->running()->all();
+$count = count($vms);
+$names = collect($vms)->pluck('name');
+$memory = collect($vms)->sum('maxmem');
 ```
 
 ### Individual Resources
 
-Select a single node or VM when you know its name or ID:
+Fetch node status or select a VM by its ID:
 
 ```php
-$node = Proxmox::node('pve1')->status();
+$node = Proxmox::node('pve1');
+$nodeStatus = $node->status();
 
-$vm = Proxmox::node('pve1')->virtualMachine(101);
+$vm = $node->virtualMachine(101); // Fetches /nodes/pve1/qemu/101/status/current.
 
-$status = $vm->status(); // GET /nodes/{node}/qemu/{vmid}/status/current
-$config = $vm->config(); // GET /nodes/{node}/qemu/{vmid}/config
+$data = $vm->toArray();          // Stored runtime data; no request.
+$response = response()->json($vm); // Serializes the same data; no request.
 
-$task = $vm->resize('scsi0', '+10G'); // Absolute ("32G") or relative ("+10G")
+$config = $vm->config();         // Fetches /nodes/pve1/qemu/101/config.
+$task = $vm->resize('scsi0', '+10G'); // Absolute ("32G") or relative ("+10G").
 ```
 
-`status()` returns an unwrapped attribute array; `get()` and `first()` are aliases. Single resources have no `all()` or `where()`, and HTTP 404 responses throw instead of returning `null`. Node names and VM IDs are validated as soon as they are selected. VM IDs must be integers (or integer strings) between 100 and 999999999.
+`virtualMachine($id)` immediately fetches runtime status and returns a `Proxmox\Resources\VirtualMachines\VirtualMachine` object containing that data and its management methods. `toArray()` and JSON serialization return only the stored data, without sending requests. Listing rows are summary arrays; fetch a VM by ID when you need its runtime data or management methods.
 
-`Proxmox::nodes('pve1')` remains available as an alias for `Proxmox::node('pve1')`.
+Read fresh status or update the stored snapshot explicitly:
+
+```php
+$currentStatus = $vm->status(); // Fresh array; leaves the stored data unchanged.
+$vm->refresh();                 // Fetches fresh data, updates the snapshot, returns $vm.
+```
+
+HTTP 404 responses throw when selecting a VM. Node names and VM IDs are validated before requesting their data. VM IDs must be integers (or integer strings) between 100 and 999999999.
 
 ### Create a QEMU Virtual Machine
 
-Build a VM fluently and call `create()`. Ask Proxmox for a free ID with `nextVirtualMachineId()`:
-
-```php
-$task = Proxmox::node('pve1')->virtualMachines()
-    ->make(Proxmox::nextVirtualMachineId())
-    ->name('web-101')
-    ->sockets(1)
-    ->cores(2)
-    ->memory(4096)       // MiB
-    ->storage('local-lvm')
-    ->disk(32)           // GiB
-    ->bridge('vmbr0')
-    ->ip('192.0.2.10', prefix: 24, gateway: '192.0.2.1')
-    ->user('ubuntu')
-    ->sshKey($publicKey)
-    ->with(['ostype' => 'l26', 'onboot' => 1])
-    ->create();
-
-$task->wait(); // Optional: block until Proxmox finishes the creation task.
-```
-
-The builder is `Conditionable` (`when()` / `unless()`), and `with()` merges any native QEMU parameter. Use `dhcp()` instead of `ip()` for DHCP, `password()` for a guest password, `image()` to import a cloud image, and `start()` to boot after creation. Passing an array to `create()` is equivalent:
+Pass a configuration array to `node($name)->virtualMachines()->create()`. Its PHPDoc declares the supported readable keys and common native keys for IDE completion. `vmid` is required; request a free ID with `nextVirtualMachineId()`:
 
 ```php
 $task = Proxmox::node('pve1')->virtualMachines()->create([
-    'vmid' => 101,
-    'name' => 'web-101',
+    'vmid' => Proxmox::nextVirtualMachineId(),
+    'name' => 'web-server',
     'sockets' => 1,
     'cores' => 2,
-    'memory' => 4096,
-    'disk' => 32,
+    'memory' => 4096,       // MiB
     'storage' => 'local-lvm',
+    'disk' => 32,           // GiB
     'bridge' => 'vmbr0',
     'ip' => '192.0.2.10',
     'prefix' => 24,
     'gateway' => '192.0.2.1',
+    'user' => 'ubuntu',
+    'ssh_key' => $publicKey,
+    'ostype' => 'l26',
+    'onboot' => 1,
 ]);
+
+$task->wait(); // Optional: block until Proxmox finishes the creation task.
 ```
 
-`sockets` sets the number of CPU sockets and `cores` sets cores per socket (total vCPUs = sockets x cores). Replace `storage`, `bridge`, and the example network addresses with your host's actual values. The package does not guess the subnet prefix or gateway.
+`sockets` sets CPU sockets and `cores` sets cores per socket (total vCPUs = sockets x cores). Replace `storage`, `bridge`, and the example network addresses with your host's actual values. The package does not guess the subnet prefix or gateway.
 
-| Builder method / field | Proxmox configuration |
+| Field | Proxmox configuration |
 |---|---|
-| `disk()` + `storage()` | Allocates `scsi0` on that storage, using `virtio-scsi-pci` unless you supply `scsihw`. |
-| `bridge()` | Creates `net0`, a VirtIO network card connected to the named bridge. |
-| `ip()` (`ip` + `prefix` + optional `gateway`) | Builds the IPv4 Cloud-Init configuration in `ipconfig0`. `dhcp()` sets `ip=dhcp`. |
-| `user()` / `password()` | Sets the guest's Cloud-Init `ciuser` / `cipassword`, not Proxmox API credentials. |
-| `sshKey()` (`ssh_key`) | Sets Cloud-Init `sshkeys` from unencoded OpenSSH **public** keys. Pass several keys as separate arguments; the package handles the encoding. |
-| `image()` + `storage()` | Imports a QCOW2 source into a new `scsi0` disk on the destination storage. |
+| `disk` + `storage` | Allocates `scsi0` on that storage, using `virtio-scsi-pci` unless you supply `scsihw`. |
+| `bridge` | Creates `net0`, a VirtIO network card connected to the named bridge. |
+| `ip` + `prefix` + optional `gateway` | Builds the IPv4 Cloud-Init configuration in `ipconfig0`. Set `ip` to `dhcp` for DHCP. |
+| `user` / `password` | Sets the guest's Cloud-Init `ciuser` / `cipassword`. |
+| `ssh_key` | Sets Cloud-Init `sshkeys` from unencoded OpenSSH public key text. Separate multiple keys with newlines; the package encodes the string. |
+| `image` + `storage` | Imports a QCOW2 source into a new `scsi0` disk on the destination storage. |
 | Any of `image`, `ip`, `user`, `password`, `ssh_key` + `storage` | Automatically attaches the Cloud-Init drive as `ide2`. |
+| `start` | Boots after creation when enabled. Cannot be enabled together with `image` and `disk`. |
 
 For a static IPv4 address, supply a plain address (without `/24`), an integer prefix between 0 and 32, and optionally a gateway. An IP requires `storage` and either `bridge` or an explicit native `net0` card.
 
-Native QEMU parameters remain supported, including additional disks, VLAN options, and IPv6 through `ipconfig0`. Do not combine `disk`/`image` with `scsi0`, `bridge` with `net0`, `ip` with `ipconfig0`, or credential aliases with their native equivalents. Readable Cloud-Init fields also conflict with an explicit `ide2`. Invalid readable fields and conflicts throw `InvalidArgumentException` before any request is sent. Native `sshkeys` must already be URL-encoded; only `ssh_key` performs that encoding. `Proxmox::createVirtualMachine('pve1', $configuration)` is the direct equivalent.
+Additional native QEMU parameters remain supported, including additional disks, VLAN options, and IPv6 through `ipconfig0`. The documented array shape allows these extra keys. Do not combine `disk`/`image` with `scsi0`, `bridge` with `net0`, `ip` with `ipconfig0`, or readable guest credentials with their native equivalents. Readable Cloud-Init fields also conflict with an explicit `ide2`. Invalid readable fields, invalid VM IDs, and conflicts throw `InvalidArgumentException` before any request is sent. Native `sshkeys` must already be URL-encoded; only `ssh_key` performs that encoding.
 
-`create()` returns a `Proxmox\Tasks\Task` for the asynchronous creation, not a running VM. IP and guest credentials require a Cloud-Init-enabled image; attaching the drive alone does not configure an arbitrary OS or allocate a public IP. Without `image`, the disk is blank: hardware creation does not install an OS or clone a template.
+`create()` returns a `Proxmox\Resources\Tasks\Task` for the asynchronous creation. IP and guest credentials require a Cloud-Init-enabled image; attaching the drive alone does not configure an arbitrary OS or allocate a public IP. Without `image`, the disk is blank: hardware creation does not install an OS or clone a template.
 
 ### Tasks
 
@@ -194,7 +173,7 @@ $task->upid;          // "UPID:pve1:..."
 $task->node;          // "pve1"
 $task->status();      // GET /nodes/{node}/tasks/{upid}/status
 $task->isRunning();
-$task->log(start: 0, limit: 50);
+$task->log(start: 0, limit: 50); // Array of log lines.
 
 $task->wait(timeout: 300, interval: 1);
 ```
@@ -208,32 +187,34 @@ The source image must already exist **on Proxmox storage accessible from the sel
 List available QCOW2 import sources and select their `volid`:
 
 ```php
-$images = Proxmox::node('pve1')->images('local')->all();
+$images = Proxmox::node('pve1')->images('local');
 
-$image = Proxmox::node('pve1')->images('local')
+$image = collect($images)
     ->where('volid', 'local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2')
     ->first();
 ```
 
-Image queries support the same query methods as VM listings. `Proxmox::getImages('pve1', 'local')` is the direct equivalent. These list QCOW2 files from `GET /nodes/{node}/storage/{storage}/content?content=import`, not existing VM disks or ISOs. An empty listing means no matching files; HTTP/permission errors still throw. The listing cannot verify that a file contains Cloud-Init.
+`images($storage)` fetches immediately and returns an array of QCOW2 files from `GET /nodes/{node}/storage/{storage}/content?content=import`, not existing VM disks or ISOs. An empty listing means no matching files; HTTP/permission errors still throw. The listing cannot verify that a file contains Cloud-Init.
 
 ```php
-$task = Proxmox::node('pve1')->virtualMachines()
-    ->make(102)
-    ->name('ubuntu-102')
-    ->cores(2)
-    ->memory(4096)
-    ->image('local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2')
-    ->storage('local-lvm')
-    ->disk(32)
-    ->bridge('vmbr0')
-    ->ip('192.0.2.10', prefix: 24, gateway: '192.0.2.1')
-    ->user('ubuntu')
-    ->sshKey($publicKey) // Contents of an OpenSSH .pub file, not its path.
-    ->create(importTimeout: 300);
+$task = Proxmox::node('pve1')->virtualMachines()->create([
+    'vmid' => 102,
+    'name' => 'ubuntu-102',
+    'cores' => 2,
+    'memory' => 4096,
+    'image' => 'local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2',
+    'storage' => 'local-lvm',
+    'disk' => 32,
+    'bridge' => 'vmbr0',
+    'ip' => '192.0.2.10',
+    'prefix' => 24,
+    'gateway' => '192.0.2.1',
+    'user' => 'ubuntu',
+    'ssh_key' => $publicKey, // Contents of an OpenSSH .pub file.
+], importTimeout: 300);
 ```
 
-`image()` takes a volume ID such as `local:import/ubuntu.qcow2`, not a bare filename, absolute path, or download URL. Proxmox copies the source into a new per-VM disk using `import-from`; the reusable source is not attached as a shared writable disk. The package defaults to `virtio-scsi-pci`, booting from `scsi0`, and a serial console (`serial0=socket`, `vga=serial0`). Explicit native controller, boot, and console choices are preserved.
+The `image` field takes a volume ID such as `local:import/ubuntu.qcow2`, not a bare filename, absolute path, or download URL. Proxmox copies the source into a new per-VM disk using `import-from`; the reusable source is not attached as a shared writable disk. The package defaults to `virtio-scsi-pci`, booting from `scsi0`, and a serial console (`serial0=socket`, `vga=serial0`). Explicit native controller, boot, and console choices are preserved.
 
 Without `disk`, creation returns the import task immediately and retains the image's virtual disk size. With `image` **and** `disk`, the method waits for successful import (up to `importTimeout` seconds, 300 by default), then submits a separate absolute-size resize and returns the **resize task**. Wait for that final task before starting the VM. Proxmox cannot shrink disks: request at least the source image's virtual size, which can differ from its compressed file size. Guest partition/filesystem expansion depends on the image's Cloud-Init configuration.
 
@@ -254,9 +235,24 @@ All resource methods remove the API's `data` envelope. HTTP 4xx/5xx responses ra
 | `TaskFailedException` | A waited task stops with an error. Exposes `upid` and `exitStatus`. |
 | `TaskTimeoutException` | A waited task is still running after the timeout. Exposes `upid` and `timeout`. |
 
-### Direct Shortcuts
+### Migrating to the Direct-Fetch API
 
-`getNodes()`, `getNode($node)`, `getVirtualMachines($node)`, `getVirtualMachine($node, $vmid)`, `getImages($node, $storage)`, and `createVirtualMachine($node, $configuration)` remain available and return the same values as their fluent equivalents.
+`nodes()`, `images($storage)`, and task logs return arrays directly. Fetch VMs through `virtualMachines()->all()`, which also returns an array. Use `collect($data)` for local filtering; VM operations provide `all()` and `create()` without query methods or macros.
+
+| Previous call | Replacement |
+|---|---|
+| `Proxmox::getNodes()` | `Proxmox::nodes()` |
+| `Proxmox::getNode($node)` | `Proxmox::node($node)->status()` |
+| `Proxmox::getVirtualMachines($node)` | `Proxmox::node($node)->virtualMachines()->all()` |
+| `Proxmox::getVirtualMachine($node, $id)` | `Proxmox::node($node)->virtualMachine($id)->toArray()` |
+| `Proxmox::getImages($node, $storage)` | `Proxmox::node($node)->images($storage)` |
+| `Proxmox::createVirtualMachine($node, $config)` | `Proxmox::node($node)->virtualMachines()->create($config)` |
+| `Proxmox::nodes($node)` | `Proxmox::node($node)` |
+| `node()->virtualMachine()` | `node()->virtualMachines()->all()` |
+| `node()->createVirtualMachine($config)` | `node()->virtualMachines()->create($config)` |
+| `node()->makeVirtualMachine($id)->...->create()` | `node()->virtualMachines()->create(['vmid' => $id, ...])` |
+
+Node and VM `get()` / `first()` aliases have been removed. Use `node()->status()` for node data, `virtualMachine($id)->toArray()` for a VM's fetched data, and `virtualMachine($id)->status()` for a fresh status request. `Task::log()` now returns an array as well.
 
 ### Raw HTTP Requests
 
@@ -277,7 +273,7 @@ use Illuminate\Support\Facades\Http;
 
 Http::fake(['*/nodes/pve1/qemu' => Http::response(['data' => [['vmid' => 101]]])]);
 
-expect(Proxmox::node('pve1')->virtualMachines()->pluck('vmid')->all())->toBe([101]);
+expect(Proxmox::node('pve1')->virtualMachines()->all())->toBe([['vmid' => 101]]);
 ```
 
 ## Changelog
@@ -290,26 +286,22 @@ Thank you for considering contributing to Proxmox! Please review our [contributi
 
 ### Source Structure
 
-Related classes are grouped by domain, following Laravel's component organization, such as [Mail](https://github.com/laravel/framework/tree/13.x/src/Illuminate/Mail) and [Bus](https://github.com/laravel/framework/tree/13.x/src/Illuminate/Bus). Shared exceptions and support code have dedicated namespaces:
+Related resources are grouped by domain under `Proxmox\Resources`. Shared exceptions and support code have dedicated namespaces:
 
 ```text
 src/
-├── Nodes/
-│   ├── Node.php
-│   └── Nodes.php
-├── VirtualMachines/
-│   ├── VirtualMachine.php
-│   ├── VirtualMachines.php
-│   ├── PendingVirtualMachine.php
-│   └── VirtualMachineConfiguration.php
-├── Images/
-│   └── Images.php
-├── Tasks/
-│   └── Task.php
+├── Resources/
+│   ├── Nodes/
+│   │   └── Node.php
+│   ├── VirtualMachines/
+│   │   ├── VirtualMachine.php
+│   │   ├── VirtualMachines.php
+│   │   └── VirtualMachineConfiguration.php
+│   └── Tasks/
+│       └── Task.php
 ├── Exceptions/
 ├── Support/
 │   ├── Identifier.php
-│   ├── ResourceQuery.php
 │   └── ResponseData.php
 ├── Facades/
 ├── Proxmox.php
@@ -317,7 +309,7 @@ src/
 └── ProxmoxServiceProvider.php
 ```
 
-Direct resource imports use `Proxmox\Nodes`, `Proxmox\VirtualMachines`, `Proxmox\Images`, and `Proxmox\Tasks`. For example, a task is `Proxmox\Tasks\Task`. Shared listing macros use `Proxmox\Support\ResourceQuery`; package exceptions remain under `Proxmox\Exceptions`.
+For example, direct imports use `Proxmox\Resources\VirtualMachines\VirtualMachine` and `Proxmox\Resources\Tasks\Task`. Package exceptions live under `Proxmox\Exceptions`.
 
 ## Security Vulnerabilities
 

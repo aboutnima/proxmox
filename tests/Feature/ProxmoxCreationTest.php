@@ -16,7 +16,7 @@ beforeEach(function () {
     Http::preventStrayRequests();
 });
 
-it('translates readable VM creation fields through both public entry points', function (bool $direct) {
+it('translates readable fields through facade and client creation', function (bool $direct) {
     $configuration = [
         'vmid' => 101,
         'name' => 'web-101',
@@ -34,9 +34,10 @@ it('translates readable VM creation fields through both public entry points', fu
 
     Http::fake(['*' => Http::response(['data' => $task])]);
 
-    $result = $direct
-        ? Proxmox::createVirtualMachine('my', $configuration)
-        : Proxmox::node('my')->virtualMachine()->create($configuration);
+    $virtualMachines = $direct
+        ? Proxmox::connection()->node('my')->virtualMachines()
+        : Proxmox::node('my')->virtualMachines();
+    $result = $virtualMachines->create($configuration);
 
     expect($result->upid)->toBe($task)
         ->and($configuration['disk'])->toBe(32)
@@ -64,7 +65,7 @@ it('translates readable VM creation fields through both public entry points', fu
 it('supports DHCP without a prefix or gateway', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:creation'])]);
 
-    Proxmox::node('my')->virtualMachine()->create([
+    Proxmox::node('my')->virtualMachines()->create([
         'vmid' => 101,
         'storage' => 'local-lvm',
         'bridge' => 'vmbr0',
@@ -83,7 +84,7 @@ it('supports DHCP without a prefix or gateway', function () {
 it('supports static addresses without a gateway and the full IPv4 prefix range', function (int $prefix) {
     Http::fake(['*' => Http::response(['data' => 'UPID:creation'])]);
 
-    Proxmox::node('my')->virtualMachine()->create([
+    Proxmox::node('my')->virtualMachines()->create([
         'vmid' => 101,
         'storage' => 'local-lvm',
         'bridge' => 'vmbr0',
@@ -97,7 +98,7 @@ it('supports static addresses without a gateway and the full IPv4 prefix range',
 it('allows readable disks and network cards without Cloud-Init', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:creation'])]);
 
-    Proxmox::node('my')->virtualMachine()->create([
+    Proxmox::node('my')->virtualMachines()->create([
         'vmid' => 101,
         'disk' => 16,
         'storage' => 'fast_ssd-1',
@@ -116,7 +117,7 @@ it('allows readable disks and network cards without Cloud-Init', function () {
 it('can use an explicitly configured network card with a readable IP', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:creation'])]);
 
-    Proxmox::node('my')->virtualMachine()->create([
+    Proxmox::node('my')->virtualMachines()->create([
         'vmid' => 101,
         'storage' => 'local-lvm',
         'net0' => 'virtio,bridge=vmbr0,tag=10',
@@ -132,7 +133,7 @@ it('can use an explicitly configured network card with a readable IP', function 
 it('preserves an explicitly chosen disk controller with a readable disk', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:creation'])]);
 
-    Proxmox::createVirtualMachine('my', [
+    Proxmox::node('my')->virtualMachines()->create([
         'vmid' => 101,
         'disk' => 32,
         'storage' => 'local-lvm',
@@ -146,8 +147,8 @@ it('preserves an explicitly chosen disk controller with a readable disk', functi
 it('keeps native creation options unchanged and does not leak readable settings between calls', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:creation'])]);
 
-    $resource = Proxmox::node('my')->virtualMachine();
-    $resource->create([
+    $node = Proxmox::node('my');
+    $node->virtualMachines()->create([
         'vmid' => 101,
         'disk' => 32,
         'storage' => 'local-lvm',
@@ -157,6 +158,9 @@ it('keeps native creation options unchanged and does not leak readable settings 
 
     $native = [
         'vmid' => 102,
+        'description' => 'A VM with additional native parameters',
+        'agent' => 1,
+        'tags' => 'web;production',
         'storage' => 'other-storage',
         'scsi0' => 'other-storage:64,discard=on',
         'net0' => 'e1000,bridge=vmbr1',
@@ -164,7 +168,7 @@ it('keeps native creation options unchanged and does not leak readable settings 
         'ipconfig0' => 'ip6=auto',
     ];
 
-    $resource->create($native);
+    $node->virtualMachines()->create($native);
 
     Http::assertSent(fn (Request $request): bool => $request->data() === $native);
     Http::assertSentCount(2);
@@ -181,7 +185,7 @@ it('rejects invalid readable creation fields before sending a request', function
         'gateway' => '192.0.2.1',
     ], $invalid);
 
-    expect(fn () => Proxmox::node('my')->virtualMachine()->create($configuration))
+    expect(fn () => Proxmox::node('my')->virtualMachines()->create($configuration))
         ->toThrow(InvalidArgumentException::class, $field);
 
     Http::assertNothingSent();
@@ -219,7 +223,7 @@ it('rejects invalid readable creation fields before sending a request', function
 ]);
 
 it('requires explicit dependencies for readable creation fields', function (array $configuration, string $field) {
-    expect(fn () => Proxmox::createVirtualMachine('my', ['vmid' => 101, ...$configuration]))
+    expect(fn () => Proxmox::node('my')->virtualMachines()->create(['vmid' => 101, ...$configuration]))
         ->toThrow(InvalidArgumentException::class, $field);
 
     Http::assertNothingSent();

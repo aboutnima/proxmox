@@ -135,7 +135,7 @@ it('rejects malformed task status responses', function (array $data) {
 it('reads task log lines with pagination', function () {
     Http::fake(['*' => Http::response(['data' => [['n' => 21, 't' => 'transferred 1.0 GiB']]])]);
 
-    expect(Proxmox::task(TASK_UPID)->log(start: 20, limit: 10)->pluck('t')->all())->toBe(['transferred 1.0 GiB']);
+    expect(Proxmox::task(TASK_UPID)->log(start: 20, limit: 10))->toBe([['n' => 21, 't' => 'transferred 1.0 GiB']]);
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
         && $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/pve1/tasks/'.rawurlencode(TASK_UPID).'/log?start=20&limit=10');

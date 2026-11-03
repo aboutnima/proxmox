@@ -4,22 +4,18 @@ declare(strict_types=1);
 
 namespace Proxmox;
 
-use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Fluent;
 use InvalidArgumentException;
 use Proxmox\Exceptions\InvalidConfigurationException;
-use Proxmox\Exceptions\TaskFailedException;
-use Proxmox\Exceptions\TaskTimeoutException;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Resources\Nodes\Node;
-use Proxmox\Resources\Nodes\Nodes;
 use Proxmox\Resources\Tasks\Task;
+use Proxmox\Support\ResponseData;
 use SensitiveParameter;
 use Throwable;
 
@@ -150,13 +146,21 @@ readonly class Proxmox
     }
 
     /**
-     * @return ($node is null ? Nodes : Node)
+     * @return list<array<array-key, mixed>>
      *
+     * @throws ConnectionException
      * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
      */
-    public function nodes(?string $node = null): Nodes|Node
+    public function nodes(): array
     {
-        return $node === null ? new Nodes($this) : $this->node($node);
+        if (func_num_args() > 0) {
+            throw new InvalidArgumentException('Use node($name) to select a node; nodes() only lists nodes.');
+        }
+
+        return ResponseData::list($this->get('nodes'));
     }
 
     /**
@@ -194,95 +198,6 @@ readonly class Proxmox
         }
 
         return (int) $vmid;
-    }
-
-    /**
-     * @return Collection<int, array<array-key, mixed>>
-     *
-     * @throws ConnectionException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws UnexpectedResponseException
-     */
-    public function getNodes(): Collection
-    {
-        return $this->nodes()->all();
-    }
-
-    /**
-     * @return array<array-key, mixed>
-     *
-     * @throws ConnectionException
-     * @throws InvalidArgumentException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws UnexpectedResponseException
-     */
-    public function getNode(string $node): array
-    {
-        return $this->node($node)->status();
-    }
-
-    /**
-     * @return Collection<int, array<array-key, mixed>>
-     *
-     * @throws ConnectionException
-     * @throws InvalidArgumentException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws UnexpectedResponseException
-     */
-    public function getVirtualMachines(string $node): Collection
-    {
-        return $this->node($node)->virtualMachines()->all();
-    }
-
-    /**
-     * @return array<array-key, mixed>
-     *
-     * @throws ConnectionException
-     * @throws InvalidArgumentException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws UnexpectedResponseException
-     */
-    public function getVirtualMachine(string $node, int|string $vmid): array
-    {
-        return $this->node($node)->virtualMachine($vmid)->status();
-    }
-
-    /**
-     * List QCOW2 source images on storage with the "import" content type enabled.
-     *
-     * @return Collection<int, array<array-key, mixed>>
-     *
-     * @throws ConnectionException
-     * @throws InvalidArgumentException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws UnexpectedResponseException
-     */
-    public function getImages(string $node, string $storage): Collection
-    {
-        return $this->node($node)->images($storage)->all();
-    }
-
-    /**
-     * Create a QEMU virtual machine using readable fields or native API parameters.
-     *
-     * @param  array<string, mixed>|Arrayable<string, mixed>  $configuration
-     *
-     * @throws ConnectionException
-     * @throws InvalidArgumentException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws TaskFailedException
-     * @throws TaskTimeoutException
-     * @throws UnexpectedResponseException
-     */
-    public function createVirtualMachine(string $node, array|Arrayable $configuration, int $importTimeout = 300): Task
-    {
-        return $this->node($node)->virtualMachines()->create($configuration, $importTimeout);
     }
 
     /**

@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Proxmox\Resources\VirtualMachines;
 
+use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use InvalidArgumentException;
+use JsonSerializable;
 use Proxmox\Exceptions\InvalidConfigurationException;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Proxmox;
@@ -14,23 +16,33 @@ use Proxmox\Resources\Tasks\Task;
 use Proxmox\Support\Identifier;
 use Proxmox\Support\ResponseData;
 
-readonly class VirtualMachine
+/**
+ * A VM's fetched runtime data and node-scoped management operations.
+ *
+ * @implements Arrayable<array-key, mixed>
+ */
+class VirtualMachine implements Arrayable, JsonSerializable
 {
-    public string $node;
+    public readonly string $node;
 
-    public int $vmid;
+    public readonly int $vmid;
+
+    /**
+     * @var array<array-key, mixed>
+     */
+    private array $attributes = [];
 
     /**
      * @throws InvalidArgumentException
      */
-    public function __construct(private Proxmox $client, string $node, int|string $vmid)
+    public function __construct(private readonly Proxmox $client, string $node, int|string $vmid)
     {
         $this->node = Identifier::node($node);
         $this->vmid = Identifier::vmid($vmid);
     }
 
     /**
-     * Get the current runtime status.
+     * Fetch the current runtime status without changing the stored data.
      *
      * @return array<array-key, mixed>
      *
@@ -45,29 +57,36 @@ readonly class VirtualMachine
     }
 
     /**
-     * @return array<array-key, mixed>
+     * Replace the stored data with the latest runtime status.
      *
      * @throws ConnectionException
      * @throws InvalidConfigurationException
      * @throws RequestException
      * @throws UnexpectedResponseException
      */
-    public function get(): array
+    public function refresh(): static
     {
-        return $this->status();
+        $this->attributes = $this->status();
+
+        return $this;
+    }
+
+    /**
+     * Return the stored runtime data without sending a request.
+     *
+     * @return array<array-key, mixed>
+     */
+    public function toArray(): array
+    {
+        return $this->attributes;
     }
 
     /**
      * @return array<array-key, mixed>
-     *
-     * @throws ConnectionException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws UnexpectedResponseException
      */
-    public function first(): array
+    public function jsonSerialize(): array
     {
-        return $this->status();
+        return $this->toArray();
     }
 
     /**

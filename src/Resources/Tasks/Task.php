@@ -7,7 +7,6 @@ namespace Proxmox\Resources\Tasks;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Sleep;
 use InvalidArgumentException;
 use Proxmox\Exceptions\InvalidConfigurationException;
@@ -123,14 +122,14 @@ readonly class Task implements Stringable
     }
 
     /**
-     * @return Collection<int, array<array-key, mixed>>
+     * @return list<array<array-key, mixed>>
      *
      * @throws ConnectionException
      * @throws InvalidConfigurationException
      * @throws RequestException
      * @throws UnexpectedResponseException
      */
-    public function log(int $start = 0, int $limit = 50): Collection
+    public function log(int $start = 0, int $limit = 50): array
     {
         return ResponseData::list($this->client->get($this->path('log'), ['start' => $start, 'limit' => $limit]));
     }

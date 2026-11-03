@@ -4,15 +4,13 @@ declare(strict_types=1);
 
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Sleep;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Facades\Proxmox;
-use Proxmox\Resources\Nodes\Nodes;
 use Proxmox\Resources\Tasks\Task;
-use Proxmox\Resources\VirtualMachines\PendingVirtualMachine;
 use Proxmox\Resources\VirtualMachines\VirtualMachines;
-use Proxmox\Support\ResourceQuery;
 
 const API_URL = 'https://proxmox.example.test:8006/api2/json';
 
@@ -29,7 +27,6 @@ beforeEach(function () {
 });
 
 afterEach(function () {
-    ResourceQuery::flushMacros();
     Sleep::fake(false);
     Carbon::setTestNow();
 });
@@ -47,32 +44,49 @@ it('rejects malformed next VM ID responses', function (mixed $data) {
 })->with([null, '', '0', 'abc', [[101]], 1.5]);
 
 it('reads the configuration of a VM', function () {
-    Http::fake([API_URL.'/nodes/pve1/qemu/101/config' => Http::response(['data' => ['cores' => 2, 'memory' => '2048']])]);
+    Http::fake([
+        API_URL.'/nodes/pve1/qemu/101/status/current' => Http::response(['data' => ['vmid' => 101, 'status' => 'running']]),
+        API_URL.'/nodes/pve1/qemu/101/config' => Http::response(['data' => ['cores' => 2, 'memory' => '2048']]),
+    ]);
 
-    expect(Proxmox::node('pve1')->virtualMachine(101)->config())->toBe(['cores' => 2, 'memory' => '2048']);
+    $vm = Proxmox::node('pve1')->virtualMachine(101);
+
+    expect($vm->config())->toBe(['cores' => 2, 'memory' => '2048'])
+        ->and($vm->toArray())->toBe(['vmid' => 101, 'status' => 'running']);
+
+    Http::assertSentCount(2);
 });
 
 it('resizes a VM disk and returns the resize task', function (string $size) {
-    Http::fake(['*' => Http::response(['data' => 'UPID:pve1:resize'])]);
+    Http::fake([
+        '*/status/current' => Http::response(['data' => ['vmid' => 101, 'status' => 'running']]),
+        '*/resize' => Http::response(['data' => 'UPID:pve1:resize']),
+    ]);
 
-    $task = Proxmox::node('pve1')->virtualMachine(101)->resize('scsi0', $size);
+    $vm = Proxmox::node('pve1')->virtualMachine(101);
+    $task = $vm->resize('scsi0', $size);
 
     expect($task)->toBeInstanceOf(Task::class)
         ->and($task->node)->toBe('pve1')
-        ->and($task->upid)->toBe('UPID:pve1:resize');
+        ->and($task->upid)->toBe('UPID:pve1:resize')
+        ->and($vm->toArray())->toBe(['vmid' => 101, 'status' => 'running']);
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'PUT'
         && $request->url() === API_URL.'/nodes/pve1/qemu/101/resize'
         && $request->data() === ['disk' => 'scsi0', 'size' => $size]);
+    Http::assertSentCount(2);
 })->with(['32G', '+10G', '1.5T', '2048M']);
 
-it('validates disk resize arguments before sending a request', function (string $disk, string $size, string $message) {
-    Http::fake();
+it('validates disk resize arguments before sending a resize request', function (string $disk, string $size, string $message) {
+    Http::fake(['*/status/current' => Http::response(['data' => ['status' => 'running']])]);
 
-    expect(fn () => Proxmox::node('pve1')->virtualMachine(101)->resize($disk, $size))
+    $vm = Proxmox::node('pve1')->virtualMachine(101);
+
+    expect(fn () => $vm->resize($disk, $size))
         ->toThrow(InvalidArgumentException::class, $message);
 
-    Http::assertNothingSent();
+    Http::assertSentCount(1);
+    Http::assertNotSent(fn (Request $request): bool => $request->method() === 'PUT');
 })->with([
     ['scsi', '10G', 'disk'],
     ['scsi0/../x', '10G', 'disk'],
@@ -81,25 +95,32 @@ it('validates disk resize arguments before sending a request', function (string 
     ['scsi0', '', 'size'],
 ]);
 
-it('creates a VM with a fluent definition', function () {
+it('creates a VM from an array through its node-scoped operations', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:pve1:create'])]);
 
-    $task = Proxmox::node('pve1')->virtualMachines()
-        ->make(101)
-        ->name('web-1')
-        ->cores(2)
-        ->sockets(1)
-        ->memory(2048)
-        ->storage('local-lvm')
-        ->disk(20)
-        ->bridge('vmbr0')
-        ->ip('192.0.2.10', 24, '192.0.2.1')
-        ->user('ubuntu')
-        ->password('secret')
-        ->sshKey('ssh-ed25519 AAAA first', 'ssh-ed25519 BBBB second')
-        ->with(['ostype' => 'l26', 'onboot' => 1])
-        ->start()
-        ->create();
+    $virtualMachines = Proxmox::node('pve1')->virtualMachines();
+
+    Http::assertNothingSent();
+
+    $task = $virtualMachines->create([
+        'vmid' => 101,
+        'name' => 'web-1',
+        'cores' => 2,
+        'sockets' => 1,
+        'memory' => 2048,
+        'storage' => 'local-lvm',
+        'disk' => 20,
+        'bridge' => 'vmbr0',
+        'ip' => '192.0.2.10',
+        'prefix' => 24,
+        'gateway' => '192.0.2.1',
+        'user' => 'ubuntu',
+        'password' => 'secret',
+        'ssh_key' => "ssh-ed25519 AAAA first\nssh-ed25519 BBBB second",
+        'ostype' => 'l26',
+        'onboot' => 1,
+        'start' => true,
+    ]);
 
     expect($task->upid)->toBe('UPID:pve1:create');
 
@@ -127,44 +148,78 @@ it('creates a VM with a fluent definition', function () {
         ]);
 });
 
-it('exposes the fluent definition as an array', function () {
-    $pending = Proxmox::node('pve1')->virtualMachines()->make('101')
-        ->ip('192.0.2.10', 24, '192.0.2.1')
-        ->dhcp()
-        ->when(false, fn (PendingVirtualMachine $vm) => $vm->cores(8))
-        ->unless(false, fn (PendingVirtualMachine $vm) => $vm->memory(4096));
+it('accepts integer or string VM IDs when creating a VM', function (int|string $vmid) {
+    Http::fake(['*' => Http::response(['data' => 'UPID:pve1:create'])]);
 
-    expect($pending)->toBeInstanceOf(PendingVirtualMachine::class)
-        ->and($pending->toArray())->toBe(['vmid' => 101, 'ip' => 'dhcp', 'memory' => 4096]);
+    $task = Proxmox::node('pve1')->virtualMachines()->create(['vmid' => $vmid]);
+
+    expect($task->node)->toBe('pve1')
+        ->and($task->upid)->toBe('UPID:pve1:create');
+
+    Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
+        && $request['vmid'] === $vmid);
+    Http::assertSentCount(1);
+})->with([100, '101', 999999999, '999999999']);
+
+it('creates a VM using the exact static IP settings in its array', function () {
+    Http::fake(['*' => Http::response(['data' => 'UPID:pve1:create'])]);
+
+    Proxmox::node('pve1')->virtualMachines()->create([
+        'vmid' => 101,
+        'storage' => 'local-lvm',
+        'bridge' => 'vmbr0',
+        'ip' => '192.0.2.20',
+        'prefix' => 25,
+    ]);
+
+    Http::assertSent(fn (Request $request): bool => $request['ipconfig0'] === 'ip=192.0.2.20/25');
+    Http::assertSentCount(1);
 });
 
-it('replaces the previous prefix and gateway when the static ip changes', function () {
-    $pending = Proxmox::node('pve1')->virtualMachines()->make(101)
-        ->ip('192.0.2.10', 24, '192.0.2.1')
-        ->ip('192.0.2.20', 25);
-
-    expect($pending->toArray())->toBe(['vmid' => 101, 'ip' => '192.0.2.20', 'prefix' => 25]);
-});
-
-it('rejects invalid VM IDs when starting a fluent definition', function (int|string $vmid) {
-    expect(fn () => Proxmox::node('pve1')->virtualMachines()->make($vmid))
+it('rejects invalid VM IDs before submitting creation', function (mixed $vmid) {
+    expect(fn () => Proxmox::node('pve1')->virtualMachines()->create(['vmid' => $vmid]))
         ->toThrow(InvalidArgumentException::class, 'VM ID');
-})->with([0, 99, 1_000_000_000, '0101', 'abc']);
 
-it('imports, waits and resizes a fluent cloud image definition', function () {
+    Http::assertNothingSent();
+})->with([0, 99, 1_000_000_000, '0101', 'abc', null, '', 1.5]);
+
+it('requires a VM ID before submitting creation', function () {
+    expect(fn () => Proxmox::node('pve1')->virtualMachines()->create([]))
+        ->toThrow(InvalidArgumentException::class, 'VM ID');
+
+    Http::assertNothingSent();
+});
+
+it('keeps creation on VM operations without query methods or node aliases', function () {
+    $node = Proxmox::node('pve1');
+    $virtualMachines = $node->virtualMachines();
+
+    foreach (['where', 'first', 'get', 'make'] as $method) {
+        expect(method_exists($virtualMachines, $method))->toBeFalse();
+    }
+
+    foreach (['createVirtualMachine', 'makeVirtualMachine'] as $method) {
+        expect(method_exists($node, $method))->toBeFalse();
+    }
+
+    Http::assertNothingSent();
+});
+
+it('imports, waits and resizes a VM created from array configuration', function () {
     Http::fake([
         API_URL.'/nodes/pve1/qemu' => Http::response(['data' => 'UPID:pve1:import']),
         API_URL.'/nodes/pve1/tasks/*' => Http::response(['data' => ['status' => 'stopped', 'exitstatus' => 'OK']]),
         API_URL.'/nodes/pve1/qemu/101/resize' => Http::response(['data' => 'UPID:pve1:resize']),
     ]);
 
-    $task = Proxmox::node('pve1')->virtualMachines()->make(101)
-        ->storage('local-lvm')
-        ->image('local:import/ubuntu.qcow2')
-        ->disk(32)
-        ->bridge('vmbr0')
-        ->dhcp()
-        ->create(importTimeout: 60);
+    $task = Proxmox::node('pve1')->virtualMachines()->create([
+        'vmid' => 101,
+        'storage' => 'local-lvm',
+        'image' => 'local:import/ubuntu.qcow2',
+        'disk' => 32,
+        'bridge' => 'vmbr0',
+        'ip' => 'dhcp',
+    ], importTimeout: 60);
 
     expect($task->upid)->toBe('UPID:pve1:resize');
 
@@ -175,21 +230,42 @@ it('imports, waits and resizes a fluent cloud image definition', function () {
     ]);
 });
 
-it('keeps the subclass when filtering so resource actions stay available', function () {
-    $query = Proxmox::node('pve1')->virtualMachines()->where('status', 'running');
+it('reuses node-scoped VM operations for listing and creation', function () {
+    Http::fake(['*/qemu' => Http::sequence()
+        ->push(['data' => [['vmid' => 101]]])
+        ->push(['data' => 'UPID:pve1:create'])
+        ->push(['data' => [['vmid' => 101], ['vmid' => 102]]]),
+    ]);
 
-    expect($query)->toBeInstanceOf(VirtualMachines::class)
-        ->and($query->make(101))->toBeInstanceOf(PendingVirtualMachine::class);
+    $virtualMachines = Proxmox::node('pve1')->virtualMachines();
+
+    expect($virtualMachines)->toBeInstanceOf(VirtualMachines::class)
+        ->and($virtualMachines->node)->toBe('pve1');
+
+    Http::assertNothingSent();
+
+    $original = $virtualMachines->all();
+    $task = $virtualMachines->create(['vmid' => 102]);
+
+    expect($task->upid)->toBe('UPID:pve1:create')
+        ->and($virtualMachines->all())->toBe([['vmid' => 101], ['vmid' => 102]])
+        ->and($original)->toBe([['vmid' => 101]]);
+
+    Http::assertSentInOrder([
+        fn (Request $request): bool => $request->method() === 'GET',
+        fn (Request $request): bool => $request->method() === 'POST',
+        fn (Request $request): bool => $request->method() === 'GET',
+    ]);
 });
 
-it('forwards read-only collection methods to the fetched list', function () {
+it('supports consumer collection operations on a single fetched list', function () {
     Http::fake(['*' => Http::response(['data' => [
         ['node' => 'pve1', 'status' => 'online', 'maxmem' => 8],
         ['node' => 'pve2', 'status' => 'offline', 'maxmem' => 16],
         ['node' => 'pve3', 'status' => 'online', 'maxmem' => 32],
     ]])]);
 
-    $nodes = Proxmox::nodes();
+    $nodes = collect(Proxmox::nodes());
 
     expect($nodes->count())->toBe(3)
         ->and($nodes->pluck('node')->all())->toBe(['pve1', 'pve2', 'pve3'])
@@ -199,53 +275,65 @@ it('forwards read-only collection methods to the fetched list', function () {
         ->and($nodes->sortByDesc('maxmem')->first()['node'])->toBe('pve3')
         ->and($nodes->keyBy('node')->keys()->all())->toBe(['pve1', 'pve2', 'pve3']);
 
-    Http::assertSentCount(7);
+    Http::assertSentCount(1);
 });
 
-it('filters with whereIn and whereNotIn', function () {
+it('leaves membership filtering to consumer collections', function () {
     Http::fake(['*' => Http::response(['data' => [
         ['node' => 'pve1', 'status' => 'online'],
         ['node' => 'pve2', 'status' => 'offline'],
         ['node' => 'pve3', 'status' => 'unknown'],
     ]])]);
 
-    expect(Proxmox::nodes()->whereIn('status', ['online', 'unknown'])->pluck('node')->all())->toBe(['pve1', 'pve3'])
-        ->and(Proxmox::nodes()->whereNotIn('status', collect(['online']))->pluck('node')->all())->toBe(['pve2', 'pve3']);
+    $nodes = collect(Proxmox::nodes());
+
+    expect($nodes->whereIn('status', ['online', 'unknown'])->pluck('node')->all())->toBe(['pve1', 'pve3'])
+        ->and($nodes->whereNotIn('status', ['online'])->pluck('node')->all())->toBe(['pve2', 'pve3']);
+
+    Http::assertSentCount(1);
 });
 
-it('applies conditional filters', function (bool $onlineOnly, array $expected) {
+it('leaves conditional filtering to consumer collections', function (bool $onlineOnly, array $expected) {
     Http::fake(['*' => Http::response(['data' => [
         ['node' => 'pve1', 'status' => 'online'],
         ['node' => 'pve2', 'status' => 'offline'],
     ]])]);
 
-    $nodes = Proxmox::nodes()->when($onlineOnly, fn (Nodes $query) => $query->where('status', 'online'));
+    $nodes = collect(Proxmox::nodes())
+        ->when($onlineOnly, fn (Collection $items) => $items->where('status', 'online'));
 
     expect($nodes->pluck('node')->all())->toBe($expected);
+    Http::assertSentCount(1);
 })->with([
     [true, ['pve1']],
     [false, ['pve1', 'pve2']],
 ]);
 
-it('supports macros on resource listings', function () {
+it('returns arrays that consumers can filter with native PHP', function () {
     Http::fake(['*' => Http::response(['data' => [
         ['node' => 'pve1', 'status' => 'online'],
         ['node' => 'pve2', 'status' => 'offline'],
     ]])]);
 
-    ResourceQuery::macro('online', function (): ResourceQuery {
-        /** @var ResourceQuery $this */
-        return $this->where('status', 'online');
-    });
+    $nodes = Proxmox::nodes();
+    $online = array_values(array_filter($nodes, fn (array $node): bool => $node['status'] === 'online'));
 
-    expect(Proxmox::nodes()->online()->pluck('node')->all())->toBe(['pve1']);
+    expect($online)->toBe([['node' => 'pve1', 'status' => 'online']])
+        ->and($nodes)->toHaveCount(2);
+
+    Http::assertSentCount(1);
 });
 
-it('throws for unknown listing methods before sending a request', function () {
-    Http::fake();
+it('keeps consumer collection changes local', function () {
+    Http::fake(['*' => Http::response(['data' => [['node' => 'pve1']]])]);
 
-    expect(fn () => Proxmox::nodes()->push(['node' => 'pve9']))
-        ->toThrow(BadMethodCallException::class, 'push');
+    $data = Proxmox::nodes();
+    $nodes = collect($data);
+    $nodes->push(['node' => 'pve9']);
 
-    Http::assertNothingSent();
+    expect($data)->toBe([['node' => 'pve1']])
+        ->and($nodes->all())->toBe([['node' => 'pve1'], ['node' => 'pve9']]);
+
+    Http::assertSentCount(1);
+    Http::assertNotSent(fn (Request $request): bool => $request->method() !== 'GET');
 });

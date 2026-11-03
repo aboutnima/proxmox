@@ -10,7 +10,6 @@ use InvalidArgumentException;
 use Proxmox\Exceptions\InvalidConfigurationException;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Proxmox;
-use Proxmox\Resources\Images\Images;
 use Proxmox\Resources\Tasks\Task;
 use Proxmox\Resources\VirtualMachines\VirtualMachine;
 use Proxmox\Resources\VirtualMachines\VirtualMachines;
@@ -43,53 +42,58 @@ readonly class Node
     }
 
     /**
-     * @return array<array-key, mixed>
-     *
-     * @throws ConnectionException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws UnexpectedResponseException
+     * Access VM listing and creation operations without sending a request.
      */
-    public function get(): array
-    {
-        return $this->status();
-    }
-
-    /**
-     * @return array<array-key, mixed>
-     *
-     * @throws ConnectionException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws UnexpectedResponseException
-     */
-    public function first(): array
-    {
-        return $this->status();
-    }
-
     public function virtualMachines(): VirtualMachines
     {
         return new VirtualMachines($this->client, $this->name);
     }
 
     /**
-     * @return VirtualMachine
+     * Fetch a VM's runtime data and retain its management methods.
+     *
+     * @throws ConnectionException
      * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
      */
-    public function virtualMachine(int|string|null $vmid = null): VirtualMachines|VirtualMachine
+    public function virtualMachine(int|string $vmid): VirtualMachine
     {
-        return $vmid === null
-            ? $this->virtualMachines()
-            : new VirtualMachine($this->client, $this->name, $vmid);
+        return (new VirtualMachine($this->client, $this->name, $vmid))->refresh();
     }
 
     /**
+     * List QCOW2 sources on storage with the "import" content type enabled.
+     *
+     * @return list<array<array-key, mixed>>
+     *
+     * @throws ConnectionException
      * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
      */
-    public function images(string $storage): Images
+    public function images(string $storage): array
     {
-        return new Images($this->client, $this->name, $storage);
+        $storage = Identifier::name($storage, 'storage');
+        $images = ResponseData::list($this->client->get(
+            'nodes/'.rawurlencode($this->name).'/storage/'.$storage.'/content',
+            ['content' => 'import'],
+        ));
+        $sources = [];
+
+        foreach ($images as $image) {
+            if (! is_string($image['format'] ?? null) || ! is_string($image['volid'] ?? null) || $image['volid'] === '') {
+                throw UnexpectedResponseException::expectedImage();
+            }
+
+            if ($image['format'] === 'qcow2') {
+                $sources[] = $image;
+            }
+        }
+
+        return $sources;
     }
 
     /**

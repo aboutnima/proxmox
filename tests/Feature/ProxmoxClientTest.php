@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use Illuminate\Http\Client\Request;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Proxmox\Facades\Proxmox as ProxmoxFacade;
 use Proxmox\Proxmox;
@@ -35,20 +34,18 @@ it('sends authenticated GET requests to the configured API URL', function () {
 });
 
 it('gets the available nodes', function () {
-    $nodes = ProxmoxFacade::getNodes();
+    $nodes = ProxmoxFacade::nodes();
 
-    expect($nodes)->toBeInstanceOf(Collection::class)
-        ->and($nodes->all())->toBe([['node' => 'pve1']]);
+    expect($nodes)->toBeArray()->toBe([['node' => 'pve1']]);
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
         && $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes');
 });
 
 it('gets QEMU virtual machines for a node', function () {
-    $vms = ProxmoxFacade::getVirtualMachines('my');
+    $vms = ProxmoxFacade::node('my')->virtualMachines()->all();
 
-    expect($vms)->toBeInstanceOf(Collection::class)
-        ->and($vms->all())->toBe([['vmid' => 101, 'status' => 'running']]);
+    expect($vms)->toBeArray()->toBe([['vmid' => 101, 'status' => 'running']]);
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
         && $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/qemu');
@@ -56,7 +53,7 @@ it('gets QEMU virtual machines for a node', function () {
 
 it('rejects invalid node names when listing virtual machines', function () {
     foreach (['', '../other', 'my/node'] as $node) {
-        expect(fn () => ProxmoxFacade::getVirtualMachines($node))
+        expect(fn () => ProxmoxFacade::node($node)->virtualMachines()->all())
             ->toThrow(InvalidArgumentException::class, 'node');
     }
 

@@ -6,7 +6,6 @@ namespace Proxmox\Support;
 
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
-use Illuminate\Support\Collection;
 use Proxmox\Exceptions\UnexpectedResponseException;
 
 /**
@@ -17,12 +16,12 @@ use Proxmox\Exceptions\UnexpectedResponseException;
 final class ResponseData
 {
     /**
-     * @return Collection<int, array<array-key, mixed>>
+     * @return list<array<array-key, mixed>>
      *
      * @throws RequestException
      * @throws UnexpectedResponseException
      */
-    public static function list(Response $response): Collection
+    public static function list(Response $response): array
     {
         $data = $response->throw()->json('data');
 
@@ -37,7 +36,7 @@ final class ResponseData
         }
 
         /** @var list<array<array-key, mixed>> $data */
-        return new Collection($data);
+        return $data;
     }
 
     /**
