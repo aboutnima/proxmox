@@ -211,6 +211,40 @@ class VirtualMachine implements Arrayable, JsonSerializable
     }
 
     /**
+     * Destroy the VM and its disks. Proxmox refuses to delete a running VM; stop it first.
+     *
+     * With $purge, the VM is also removed from backup jobs, replication, and HA.
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function delete(bool $purge = true): Task
+    {
+        return new Task($this->client, $this->node, ResponseData::taskId(
+            $this->client->delete(rtrim($this->path(''), '/'), array_filter([
+                'purge' => $purge ? 1 : null,
+                'destroy-unreferenced-disks' => 1,
+            ], is_int(...))),
+        ));
+    }
+
+    /**
+     * Set the CPU cores per socket, keeping the current socket count.
+     *
+     * @throws ConnectionException
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function setCores(int $cores): Task
+    {
+        return $this->setCpu($cores);
+    }
+
+    /**
      * Set the CPU cores per socket, and optionally the socket count.
      *
      * Without CPU hotplug, Proxmox may keep the change pending until a running VM restarts.
