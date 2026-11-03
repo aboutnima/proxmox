@@ -17,7 +17,7 @@ beforeEach(function () {
     ]);
 
     Http::fake([
-        '*/nodes/my/qemu' => Http::response(['data' => [['vmid' => 101, 'status' => 'running']]]),
+        '*/nodes/my/qemu' => Http::response(['data' => [['status' => 'running', 'vmid' => 101]]]),
         '*' => Http::response(['data' => [['node' => 'pve1']]]),
     ]);
 });
@@ -45,7 +45,7 @@ it('gets the available nodes', function () {
 it('gets QEMU virtual machines for a node', function () {
     $vms = ProxmoxFacade::node('my')->virtualMachines()->all();
 
-    expect($vms)->toBeArray()->toBe([['vmid' => 101, 'status' => 'running']]);
+    expect($vms)->toBeArray()->toBe([['status' => 'running', 'vmid' => 101]]);
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
         && $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/qemu');

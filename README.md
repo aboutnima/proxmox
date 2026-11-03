@@ -76,6 +76,8 @@ $vms = $node->virtualMachines()->all();
 
 `nodes()` lists nodes. `node($name)` selects a node context without sending a request. `virtualMachines()` returns node-scoped VM operations without making a request; `all()` fetches the listing as an array. An empty listing returns `[]`.
 
+Resource results sort associative keys alphabetically at every nesting level. VM listings, status, configuration, stored snapshots, and JSON therefore have consistent key ordering. List item order and field values are preserved.
+
 Use Laravel collections when you need to filter, sort, or aggregate the fetched data. These operations reuse the data without further API requests:
 
 ```php
@@ -105,7 +107,6 @@ $data = $vm->toArray();          // Stored runtime data; no request.
 $response = response()->json($vm); // Serializes the same data; no request.
 
 $config = $vm->config();         // Fetches /nodes/pve1/qemu/101/config.
-$task = $vm->resize('scsi0', '+10G'); // Absolute ("32G") or relative ("+10G").
 ```
 
 `virtualMachine($id)` immediately fetches runtime status and returns a `Proxmox\Resources\VirtualMachines\VirtualMachine` object containing that data and its management methods. `toArray()` and JSON serialization return only the stored data, without sending requests. Listing rows are summary arrays; fetch a VM by ID when you need its runtime data or management methods.
@@ -118,6 +119,24 @@ $vm->refresh();                 // Fetches fresh data, updates the snapshot, ret
 ```
 
 HTTP 404 responses throw when selecting a VM. Node names and VM IDs are validated before requesting their data. VM IDs must be integers (or integer strings) between 100 and 999999999.
+
+### Change CPU, Memory, and Disk Size
+
+Each method sends one change and returns a `Task`:
+
+```php
+$vm = Proxmox::node('pve1')->virtualMachine(101);
+
+$vm->setCpu(cores: 4, sockets: 1)->wait(); // Cores per socket; omit sockets to keep the current count.
+$vm->setMemory(8192)->wait();              // MiB
+$vm->growDisk('scsi0', 10)->wait();        // Add 10 GiB to scsi0.
+
+$vm->refresh(); // Update the stored snapshot after the changes are applied.
+```
+
+`setCpu()` and `setMemory()` use Proxmox's asynchronous `POST /nodes/{node}/qemu/{vmid}/config` endpoint. Unless CPU or memory hotplug is enabled, Proxmox can keep these changes pending for a running VM until it restarts.
+
+`growDisk()` increases an existing disk, such as `scsi0` or `virtio1`, by the given number of GiB. It does not attach a new disk. Proxmox cannot shrink disks, and the guest may still need to expand its partition and filesystem. All values must be positive integers.
 
 ### Create a QEMU Virtual Machine
 

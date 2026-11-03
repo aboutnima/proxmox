@@ -37,8 +37,8 @@ it('fetches nodes immediately as an array without exposing the response envelope
 
 it('fetches QEMU virtual machines immediately as an array scoped to a node', function () {
     $data = [
-        ['vmid' => 101, 'name' => 'web', 'status' => 'running'],
-        ['vmid' => 102, 'name' => 'worker', 'status' => 'stopped'],
+        ['name' => 'web', 'status' => 'running', 'vmid' => 101],
+        ['name' => 'worker', 'status' => 'stopped', 'vmid' => 102],
     ];
 
     Http::fake(['*/nodes/my/qemu' => Http::response(['data' => $data])]);
@@ -53,7 +53,7 @@ it('fetches QEMU virtual machines immediately as an array scoped to a node', fun
 });
 
 it('hydrates a manageable VM object without refetching when its data is serialized', function () {
-    $data = ['vmid' => 101, 'name' => 'web', 'status' => 'running'];
+    $data = ['name' => 'web', 'status' => 'running', 'vmid' => 101];
 
     Http::fake(['*/nodes/my/qemu/101/status/current' => Http::response(['data' => $data])]);
 
@@ -88,7 +88,7 @@ it('updates the stored VM data only when explicitly refreshed', function () {
 });
 
 it('preserves fetched VM data when a refresh fails', function (string $failure, string $exception) {
-    $data = ['vmid' => 101, 'status' => 'running'];
+    $data = ['status' => 'running', 'vmid' => 101];
     $sequence = Http::sequence()->push(['data' => $data]);
 
     match ($failure) {
@@ -226,9 +226,9 @@ it('returns independent array snapshots for successive listing requests', functi
 
 it('lets consumers filter fetched arrays without further API requests', function (bool $vms) {
     $data = [
-        ['name' => 'first', 'status' => 'stopped', 'maxmem' => 1024],
-        ['name' => 'second', 'status' => 'running', 'maxmem' => 2048],
-        ['name' => 'third', 'status' => 'running', 'maxmem' => 4096],
+        ['maxmem' => 1024, 'name' => 'first', 'status' => 'stopped'],
+        ['maxmem' => 2048, 'name' => 'second', 'status' => 'running'],
+        ['maxmem' => 4096, 'name' => 'third', 'status' => 'running'],
     ];
 
     Http::fake(['*' => Http::response(['data' => $data])]);
@@ -250,16 +250,16 @@ it('lets consumers filter fetched arrays without further API requests', function
 
 it('preserves attribute types for consumer collection comparisons', function () {
     Http::fake(['*' => Http::response(['data' => [
-        ['vmid' => 101, 'name' => null],
-        ['vmid' => 102, 'name' => 'worker'],
+        ['name' => null, 'vmid' => 101],
+        ['name' => 'worker', 'vmid' => 102],
     ]])]);
 
     $items = collect(Proxmox::node('my')->virtualMachines()->all());
 
-    expect($items->where('vmid', '101')->first())->toBe(['vmid' => 101, 'name' => null])
+    expect($items->where('vmid', '101')->first())->toBe(['name' => null, 'vmid' => 101])
         ->and($items->where('vmid', '===', '101')->first())->toBeNull()
-        ->and($items->where('vmid', '!=', 101)->first())->toBe(['vmid' => 102, 'name' => 'worker'])
-        ->and($items->where('name', null)->first())->toBe(['vmid' => 101, 'name' => null]);
+        ->and($items->where('vmid', '!=', 101)->first())->toBe(['name' => 'worker', 'vmid' => 102])
+        ->and($items->where('name', null)->first())->toBe(['name' => null, 'vmid' => 101]);
 
     Http::assertSentCount(1);
 });
@@ -306,8 +306,8 @@ it('raises listing errors before consumers can filter the returned data', functi
 
 it('retrieves individual resource data from its status endpoint', function (bool $vms) {
     $data = $vms
-        ? ['vmid' => 101, 'status' => 'running', 'uptime' => 100]
-        : ['uptime' => 100, 'memory' => ['total' => 8192]];
+        ? ['status' => 'running', 'uptime' => 100, 'vmid' => 101]
+        : ['memory' => ['total' => 8192], 'uptime' => 100];
     $endpoint = $vms ? 'nodes/my/qemu/101/status/current' : 'nodes/my/status';
 
     Http::fake(['*' => Http::response(['data' => $data])]);
@@ -336,8 +336,8 @@ it('keeps query methods out of selected resources', function (bool $vms) {
 })->with([false, true]);
 
 it('uses distinct methods for a VM listing and an identified VM', function () {
-    $vmList = [['vmid' => 101, 'name' => 'web']];
-    $vmStatus = ['vmid' => 101, 'status' => 'running'];
+    $vmList = [['name' => 'web', 'vmid' => 101]];
+    $vmStatus = ['status' => 'running', 'vmid' => 101];
 
     Http::fake([
         '*/nodes/my/qemu' => Http::response(['data' => $vmList]),

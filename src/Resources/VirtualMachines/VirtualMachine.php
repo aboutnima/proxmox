@@ -105,7 +105,9 @@ class VirtualMachine implements Arrayable, JsonSerializable
     }
 
     /**
-     * Resize a disk to an absolute size such as "32G", or grow it with "+10G".
+     * Set the CPU cores per socket, and optionally the socket count.
+     *
+     * Without CPU hotplug, Proxmox may keep the change pending until a running VM restarts.
      *
      * @throws ConnectionException
      * @throws InvalidArgumentException
@@ -113,18 +115,75 @@ class VirtualMachine implements Arrayable, JsonSerializable
      * @throws RequestException
      * @throws UnexpectedResponseException
      */
-    public function resize(string $disk, string $size): Task
+    public function setCpu(int $cores, ?int $sockets = null): Task
+    {
+        if ($cores < 1) {
+            throw new InvalidArgumentException('cores must be a positive integer.');
+        }
+
+        if ($sockets !== null && $sockets < 1) {
+            throw new InvalidArgumentException('sockets must be a positive integer.');
+        }
+
+        return $this->configure(array_filter(['cores' => $cores, 'sockets' => $sockets], is_int(...)));
+    }
+
+    /**
+     * Set the memory in MiB.
+     *
+     * Without memory hotplug, Proxmox may keep the change pending until a running VM restarts.
+     *
+     * @throws ConnectionException
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function setMemory(int $megabytes): Task
+    {
+        if ($megabytes < 1) {
+            throw new InvalidArgumentException('megabytes must be a positive integer in MiB.');
+        }
+
+        return $this->configure(['memory' => $megabytes]);
+    }
+
+    /**
+     * Grow a disk such as "scsi0" by a number of GiB. Proxmox cannot shrink disks.
+     *
+     * @throws ConnectionException
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function growDisk(string $disk, int $gigabytes): Task
     {
         if (preg_match('/^[a-z]+[0-9]+$/D', $disk) !== 1) {
             throw new InvalidArgumentException('disk must be a disk key such as scsi0 or virtio1.');
         }
 
-        if (preg_match('/^\+?[0-9]+(\.[0-9]+)?[KMGT]?$/D', $size) !== 1) {
-            throw new InvalidArgumentException('size must be an absolute or relative size such as 32G or +10G.');
+        if ($gigabytes < 1) {
+            throw new InvalidArgumentException('gigabytes must be a positive integer.');
         }
 
         return new Task($this->client, $this->node, ResponseData::taskId(
-            $this->client->put($this->path('resize'), ['disk' => $disk, 'size' => $size]),
+            $this->client->put($this->path('resize'), ['disk' => $disk, 'size' => '+'.$gigabytes.'G']),
+        ));
+    }
+
+    /**
+     * @param  array<string, int>  $parameters
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    private function configure(array $parameters): Task
+    {
+        return new Task($this->client, $this->node, ResponseData::taskId(
+            $this->client->post($this->path('config'), $parameters),
         ));
     }
 

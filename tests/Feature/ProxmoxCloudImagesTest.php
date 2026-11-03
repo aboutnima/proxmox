@@ -28,7 +28,7 @@ afterEach(function () {
 });
 
 it('lists importable QCOW2 images as arrays through the facade and client', function (bool $direct) {
-    $image = ['volid' => 'local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2', 'format' => 'qcow2', 'size' => 3758096384];
+    $image = ['format' => 'qcow2', 'size' => 3758096384, 'volid' => 'local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2'];
 
     Http::fake(['*' => Http::response(['data' => [
         $image,
@@ -48,7 +48,7 @@ it('lists importable QCOW2 images as arrays through the facade and client', func
 })->with([false, true]);
 
 it('fetches image arrays scoped to each storage for consumer filtering', function () {
-    $image = ['volid' => 'local:import/ubuntu.qcow2', 'format' => 'qcow2'];
+    $image = ['format' => 'qcow2', 'volid' => 'local:import/ubuntu.qcow2'];
 
     Http::fake([
         '*/storage/local/*' => Http::response(['data' => [$image]]),

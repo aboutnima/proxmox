@@ -8,8 +8,8 @@
 - `Task` resource with `status()`, `isRunning()`, `wait()`, and `log()`, plus `Proxmox::task($upid)` and `node()->task($upid)`.
 - Node-scoped VM operations with `virtualMachines()->all()` for array listings and `virtualMachines()->create($configuration)` for creation, with documented array keys for IDE completion.
 - `Proxmox::nextVirtualMachineId()` for requesting a free VM ID.
-- `virtualMachine($vmid)->config()` and `virtualMachine($vmid)->resize($disk, $size)`.
-- Fetched VM snapshots with `toArray()`, JSON serialization, and `refresh()`. VM objects retain `status()`, `config()`, and `resize()` for management.
+- `virtualMachine($vmid)->config()`, plus `setCpu($cores, $sockets)`, `setMemory($megabytes)`, and `growDisk($disk, $gigabytes)`. Each change returns a `Task`.
+- Fetched VM snapshots with `toArray()`, JSON serialization, and `refresh()`. VM objects retain `status()`, `config()`, `setCpu()`, `setMemory()`, and `growDisk()` for management.
 - `PROXMOX_CONNECT_TIMEOUT`, `PROXMOX_RETRY_TIMES`, and `PROXMOX_RETRY_SLEEP` settings. Only GET requests retry, and only after connection failures.
 - Package exceptions implementing `Proxmox\Exceptions\ProxmoxException`.
 - Connection details in `php artisan about`.
@@ -33,6 +33,7 @@
 
 ### Fixed
 
+- Resource response keys now have consistent alphabetical ordering at every nesting level, preserving list item order and field values.
 - Simplified the VM creation array-shape PHPDoc for PhpStorm compatibility while retaining typed keys and native parameter passthrough.
 - `delete()` sends parameters as query parameters, because Proxmox ignores DELETE request bodies.
 - The API token secret is hidden from `var_dump()`, `print_r()`, and stack traces.

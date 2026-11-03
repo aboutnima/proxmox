@@ -9,7 +9,7 @@ use Illuminate\Http\Client\Response;
 use Proxmox\Exceptions\UnexpectedResponseException;
 
 /**
- * Unwraps the "data" envelope of Proxmox API responses.
+ * Unwraps API data and sorts object keys while preserving list order.
  *
  * @internal
  */
@@ -36,7 +36,7 @@ final class ResponseData
         }
 
         /** @var list<array<array-key, mixed>> $data */
-        return $data;
+        return array_map(self::sortKeys(...), $data);
     }
 
     /**
@@ -53,7 +53,7 @@ final class ResponseData
             throw UnexpectedResponseException::expectedAttributes();
         }
 
-        return $data;
+        return self::sortKeys($data);
     }
 
     /**
@@ -69,5 +69,24 @@ final class ResponseData
         }
 
         return $task;
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $data
+     * @return array<array-key, mixed>
+     */
+    private static function sortKeys(array $data): array
+    {
+        foreach ($data as $key => $value) {
+            if (is_array($value)) {
+                $data[$key] = self::sortKeys($value);
+            }
+        }
+
+        if (! array_is_list($data)) {
+            ksort($data, SORT_STRING);
+        }
+
+        return $data;
     }
 }

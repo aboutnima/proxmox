@@ -32,6 +32,7 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 - `nodes()` fetches and returns an array of nodes. `node($name)` selects a node context without making a request; `nodes($name)` is not supported.
 - `node($name)->virtualMachines()` returns VM operations without fetching. Call `all()` to fetch an array of VMs, or `create($configuration)` to create a VM. `node($name)->images($storage)` fetches an array immediately. Empty listings return `[]`.
 - Wrap fetched arrays in `collect($data)` to filter, sort, or aggregate locally. Collection operations do not send additional API requests.
+- Resource results sort associative keys alphabetically at every nesting level, including VM snapshots and JSON. List item order and field values are preserved.
 - `node($name)->status()` fetches node status as an array.
 - `node($name)->virtualMachine($id)` immediately fetches runtime status and returns a `Proxmox\Resources\VirtualMachines\VirtualMachine` object. An ID is required; use `virtualMachines()->all()` for a listing.
 - VM `toArray()` and JSON serialization expose the fetched snapshot without extra requests. `status()` fetches fresh status without changing the snapshot; `refresh()` updates the snapshot and returns the same VM object. `config()` fetches configuration separately.
@@ -44,12 +45,20 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 - Use `bridge` and either `ip: 'dhcp'` or a static `ip` with integer `prefix` and optional `gateway`. An IP needs `storage` plus `bridge` (or native `net0`) and adds a Cloud-Init drive.
 - Use `user`, `password`, and `ssh_key` for guest Cloud-Init credentials. `ssh_key` takes unencoded OpenSSH public key text, with newlines between multiple keys; the package encodes it.
 - `create()` returns a `Proxmox\Resources\Tasks\Task`. Access `$task->upid` / `$task->node` and call `$task->wait(timeout: 300)` to wait. Failures throw `TaskFailedException` or `TaskTimeoutException`. `status()`, `isRunning()`, and `log()` are also available; `log()` returns an array.
-- Rebuild a stored task with `Proxmox::task($upid)`. Resize an existing VM with `virtualMachine($id)->resize('scsi0', '+10G')`, which also returns a `Task`.
+- Rebuild a stored task with `Proxmox::task($upid)`.
 - For cloud images, fetch `node($name)->images($storage)` and pass a `volid` such as `local:import/ubuntu.qcow2` as `image`. The file must already exist on file-based Proxmox storage with import content enabled.
 - With `image` and `disk`, creation waits for import and returns the resize task. Run it in a queued job and wait before starting the VM. Disks cannot shrink. Failed imports and timeouts throw without deleting remote VMs or cancelling tasks.
 - Native QEMU fields, including additional disks and IPv6 in `ipconfig0`, are supported. Do not mix readable fields with native equivalents: `disk`/`image` with `scsi0`, `bridge` with `net0`, `ip` with `ipconfig0`, or guest credentials with their native equivalents. Readable Cloud-Init fields also conflict with `ide2`.
 
-### 4. Handle errors and raw requests
+### 4. Change existing VMs
+
+- Set CPU with `virtualMachine($id)->setCpu(cores: 4, sockets: 1)`. Cores are per socket; omit `sockets` to keep the current count.
+- Set memory in MiB with `virtualMachine($id)->setMemory(8192)`.
+- Grow an existing disk by GiB with `virtualMachine($id)->growDisk('scsi0', 10)`. It does not attach a new disk, and disks cannot shrink.
+- Each method validates positive integers and returns a `Task`.
+- Unless CPU or memory hotplug is enabled, Proxmox can keep CPU and memory changes for a running VM pending until the VM restarts. Wait for the returned task, then call `refresh()` to update the snapshot.
+
+### 5. Handle errors and raw requests
 
 - Resource methods unwrap `data`, throw Laravel `RequestException` on HTTP errors, and throw `Proxmox\Exceptions\UnexpectedResponseException` on malformed data.
 - Missing or invalid configuration throws `Proxmox\Exceptions\InvalidConfigurationException` on the first request.
@@ -63,7 +72,7 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 - `config/proxmox.php` for connection, timeout, retry, and TLS settings.
 - `src/Facades/Proxmox.php` for the facade methods.
 - `src/Resources/Nodes/Node.php` for node status, VM operations, and image listings.
-- `src/Resources/VirtualMachines/` for fetched VMs, listing and creation operations, creation key types, and VM configuration.
+- `src/Resources/VirtualMachines/` for fetched VMs, CPU/memory updates, disk resizing, listing and creation operations, creation key types, and VM configuration.
 - `src/Resources/Tasks/Task.php` for background tasks.
 - `src/Exceptions/` for package exceptions.
 
@@ -80,6 +89,11 @@ $runningVms = collect($vms)->where('status', 'running')->values()->all();
 $vm = Proxmox::node('pve1')->virtualMachine(101);
 $data = $vm->toArray();
 $config = $vm->config();
+
+$vm->setCpu(cores: 4)->wait();
+$vm->setMemory(8192)->wait();
+$vm->growDisk('scsi0', 10)->wait();
+$vm->refresh();
 
 $task = Proxmox::node('pve1')->virtualMachines()->create([
     'vmid' => Proxmox::nextVirtualMachineId(),
@@ -116,7 +130,8 @@ expect(Proxmox::node('pve1')->virtualMachines()->all())->toBe([['vmid' => 101]])
 - Do not use QEMU VM methods for LXC containers.
 - Do not call `Proxmox::virtualMachines()`; VM listings require `node($name)->virtualMachines()->all()`.
 - Do not disable TLS verification to work around certificate problems; configure a trusted certificate.
-- Do not treat a create or resize result as a string UPID or a running VM. Use the returned `Task`.
+- Do not treat a create, `setCpu()`, `setMemory()`, or `growDisk()` result as a string UPID or a running VM. Use the returned `Task`.
+- Do not use `growDisk()` to attach a new disk or to set an absolute size; it adds GiB to an existing disk.
 - Do not append `throw()` or `json('data')` to resource results; they belong to raw HTTP responses.
 - Do not chain query methods onto VM operations or listing arrays; use `collect($data)` for local operations.
 - Do not use the removed pending builder or node `makeVirtualMachine()` / `createVirtualMachine()` methods; use `virtualMachines()->create($configuration)`.

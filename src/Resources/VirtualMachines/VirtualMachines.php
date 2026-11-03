@@ -114,7 +114,9 @@ readonly class VirtualMachines
 
         $this->submit($parameters)->wait($importTimeout);
 
-        return (new VirtualMachine($this->client, $this->node, $vmid))->resize('scsi0', $disk.'G');
+        return new Task($this->client, $this->node, ResponseData::taskId(
+            $this->client->put('nodes/'.rawurlencode($this->node).'/qemu/'.$vmid.'/resize', ['disk' => 'scsi0', 'size' => $disk.'G']),
+        ));
     }
 
     /**

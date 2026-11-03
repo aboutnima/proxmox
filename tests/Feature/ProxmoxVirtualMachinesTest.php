@@ -10,6 +10,7 @@ use Illuminate\Support\Sleep;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Facades\Proxmox;
 use Proxmox\Resources\Tasks\Task;
+use Proxmox\Resources\VirtualMachines\VirtualMachine;
 use Proxmox\Resources\VirtualMachines\VirtualMachines;
 
 const API_URL = 'https://proxmox.example.test:8006/api2/json';
@@ -45,55 +46,134 @@ it('rejects malformed next VM ID responses', function (mixed $data) {
 
 it('reads the configuration of a VM', function () {
     Http::fake([
-        API_URL.'/nodes/pve1/qemu/101/status/current' => Http::response(['data' => ['vmid' => 101, 'status' => 'running']]),
+        API_URL.'/nodes/pve1/qemu/101/status/current' => Http::response(['data' => ['status' => 'running', 'vmid' => 101]]),
         API_URL.'/nodes/pve1/qemu/101/config' => Http::response(['data' => ['cores' => 2, 'memory' => '2048']]),
     ]);
 
     $vm = Proxmox::node('pve1')->virtualMachine(101);
 
     expect($vm->config())->toBe(['cores' => 2, 'memory' => '2048'])
-        ->and($vm->toArray())->toBe(['vmid' => 101, 'status' => 'running']);
+        ->and($vm->toArray())->toBe(['status' => 'running', 'vmid' => 101]);
 
     Http::assertSentCount(2);
 });
 
-it('resizes a VM disk and returns the resize task', function (string $size) {
+it('grows a VM disk by a number of GiB and returns the resize task', function () {
     Http::fake([
-        '*/status/current' => Http::response(['data' => ['vmid' => 101, 'status' => 'running']]),
+        '*/status/current' => Http::response(['data' => ['status' => 'running', 'vmid' => 101]]),
         '*/resize' => Http::response(['data' => 'UPID:pve1:resize']),
     ]);
 
     $vm = Proxmox::node('pve1')->virtualMachine(101);
-    $task = $vm->resize('scsi0', $size);
+    $task = $vm->growDisk('scsi0', 10);
 
     expect($task)->toBeInstanceOf(Task::class)
         ->and($task->node)->toBe('pve1')
         ->and($task->upid)->toBe('UPID:pve1:resize')
-        ->and($vm->toArray())->toBe(['vmid' => 101, 'status' => 'running']);
+        ->and($vm->toArray())->toBe(['status' => 'running', 'vmid' => 101]);
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'PUT'
         && $request->url() === API_URL.'/nodes/pve1/qemu/101/resize'
-        && $request->data() === ['disk' => 'scsi0', 'size' => $size]);
+        && $request->isForm()
+        && $request->body() === 'disk=scsi0&size=%2B10G');
     Http::assertSentCount(2);
-})->with(['32G', '+10G', '1.5T', '2048M']);
+});
 
-it('validates disk resize arguments before sending a resize request', function (string $disk, string $size, string $message) {
+it('validates disk growth arguments before sending a resize request', function (string $disk, int $gigabytes, string $message) {
     Http::fake(['*/status/current' => Http::response(['data' => ['status' => 'running']])]);
 
     $vm = Proxmox::node('pve1')->virtualMachine(101);
 
-    expect(fn () => $vm->resize($disk, $size))
+    expect(fn () => $vm->growDisk($disk, $gigabytes))
         ->toThrow(InvalidArgumentException::class, $message);
 
     Http::assertSentCount(1);
     Http::assertNotSent(fn (Request $request): bool => $request->method() === 'PUT');
 })->with([
-    ['scsi', '10G', 'disk'],
-    ['scsi0/../x', '10G', 'disk'],
-    ['scsi0', '-10G', 'size'],
-    ['scsi0', '10GB', 'size'],
-    ['scsi0', '', 'size'],
+    'missing disk number' => ['scsi', 10, 'disk must be a disk key'],
+    'path traversal' => ['scsi0/../x', 10, 'disk must be a disk key'],
+    'zero size' => ['scsi0', 0, 'gigabytes must be a positive integer'],
+    'negative size' => ['scsi0', -10, 'gigabytes must be a positive integer'],
 ]);
+
+it('sets VM CPU cores and sockets and returns the configuration task', function () {
+    Http::fake([
+        '*/status/current' => Http::response(['data' => ['cpus' => 2, 'status' => 'running', 'vmid' => 101]]),
+        '*/config' => Http::response(['data' => 'UPID:pve1:qmconfig']),
+    ]);
+
+    $vm = Proxmox::node('pve1')->virtualMachine(101);
+    $task = $vm->setCpu(cores: 4, sockets: 2);
+
+    expect($task)->toBeInstanceOf(Task::class)
+        ->and($task->node)->toBe('pve1')
+        ->and($task->upid)->toBe('UPID:pve1:qmconfig')
+        ->and($vm->toArray())->toBe(['cpus' => 2, 'status' => 'running', 'vmid' => 101]);
+
+    Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
+        && $request->url() === API_URL.'/nodes/pve1/qemu/101/config'
+        && $request->isForm()
+        && $request->body() === 'cores=4&sockets=2');
+    Http::assertSentCount(2);
+});
+
+it('keeps the current socket count when only setting VM CPU cores', function () {
+    Http::fake([
+        '*/status/current' => Http::response(['data' => ['status' => 'stopped']]),
+        '*/config' => Http::response(['data' => 'UPID:pve1:qmconfig']),
+    ]);
+
+    Proxmox::node('pve1')->virtualMachine(101)->setCpu(4);
+
+    Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
+        && $request->body() === 'cores=4');
+});
+
+it('sets VM memory in MiB and returns the configuration task', function () {
+    Http::fake([
+        '*/status/current' => Http::response(['data' => ['status' => 'running']]),
+        '*/config' => Http::response(['data' => 'UPID:pve1:qmconfig']),
+    ]);
+
+    $task = Proxmox::node('pve1')->virtualMachine(101)->setMemory(8192);
+
+    expect($task->upid)->toBe('UPID:pve1:qmconfig');
+
+    Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
+        && $request->url() === API_URL.'/nodes/pve1/qemu/101/config'
+        && $request->isForm()
+        && $request->body() === 'memory=8192');
+});
+
+it('validates CPU and memory values before sending a configuration request', function (Closure $change, string $message) {
+    Http::fake(['*/status/current' => Http::response(['data' => ['status' => 'running']])]);
+
+    $vm = Proxmox::node('pve1')->virtualMachine(101);
+
+    expect(fn () => $change($vm))
+        ->toThrow(InvalidArgumentException::class, $message);
+
+    Http::assertSentCount(1);
+    Http::assertNotSent(fn (Request $request): bool => $request->method() === 'POST');
+})->with([
+    'zero cores' => [fn (VirtualMachine $vm): Task => $vm->setCpu(0), 'cores must be a positive integer'],
+    'negative cores' => [fn (VirtualMachine $vm): Task => $vm->setCpu(-2), 'cores must be a positive integer'],
+    'zero sockets' => [fn (VirtualMachine $vm): Task => $vm->setCpu(2, 0), 'sockets must be a positive integer'],
+    'zero memory' => [fn (VirtualMachine $vm): Task => $vm->setMemory(0), 'megabytes must be a positive integer'],
+    'negative memory' => [fn (VirtualMachine $vm): Task => $vm->setMemory(-1024), 'megabytes must be a positive integer'],
+]);
+
+it('requires a task ID from the VM configuration endpoint', function (mixed $data) {
+    Http::fake([
+        '*/status/current' => Http::response(['data' => ['status' => 'running']]),
+        '*/config' => Http::response(['data' => $data]),
+    ]);
+
+    $vm = Proxmox::node('pve1')->virtualMachine(101);
+
+    expect(fn () => $vm->setMemory(4096))
+        ->toThrow(UnexpectedResponseException::class, 'task ID');
+})->with([null, '', [['UPID:pve1:qmconfig']]]);
 
 it('creates a VM from an array through its node-scoped operations', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:pve1:create'])]);
