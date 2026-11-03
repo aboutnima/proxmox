@@ -9,6 +9,8 @@ use Illuminate\Contracts\Container\Container;
 use Illuminate\Foundation\Console\AboutCommand;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Support\ServiceProvider;
+use Proxmox\Console\Commands\CreateClusterCommand;
+use Proxmox\Console\Commands\InstallCommand;
 use Throwable;
 
 class ProxmoxServiceProvider extends ServiceProvider
@@ -44,6 +46,11 @@ class ProxmoxServiceProvider extends ServiceProvider
         $this->publishesMigrations([
             __DIR__.'/../database/migrations' => database_path('migrations'),
         ], 'proxmox-migrations');
+
+        $this->commands([
+            InstallCommand::class,
+            CreateClusterCommand::class,
+        ]);
 
         if (class_exists(AboutCommand::class)) {
             AboutCommand::add('Proxmox', fn (): array => [

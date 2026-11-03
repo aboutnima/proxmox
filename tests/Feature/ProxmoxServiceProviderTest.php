@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Facades\Artisan;
 use Proxmox\Models\Cluster;
 use Proxmox\Models\Node;
 use Proxmox\Models\VirtualMachine;
@@ -43,6 +44,12 @@ it('merges the package config', function () {
             'node' => Node::class,
             'virtual_machine' => VirtualMachine::class,
         ]);
+});
+
+it('registers the package commands', function () {
+    $commands = array_keys(Artisan::all());
+
+    expect($commands)->toContain('proxmox:install', 'proxmox:create-cluster');
 });
 
 it('publishes the inventory migrations under the proxmox-migrations tag', function () {
