@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Proxmox\Models;
 
+use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Attributes\Table;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
@@ -33,19 +35,11 @@ use Proxmox\Inventory;
  * @property-read Node|null $node
  * @property-read Model|null $owner
  */
+#[Table('proxmox_virtual_machines')]
+#[Fillable(['cluster_id', 'node_id', 'vmid', 'name', 'status'])]
 class VirtualMachine extends Model
 {
     use SoftDeletes;
-
-    protected $table = 'proxmox_virtual_machines';
-
-    protected $fillable = [
-        'cluster_id',
-        'node_id',
-        'vmid',
-        'name',
-        'status',
-    ];
 
     /**
      * @return array<string, string>

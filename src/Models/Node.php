@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Proxmox\Models;
 
+use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Attributes\Table;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -23,20 +25,14 @@ use Proxmox\Resources\Nodes\Node as NodeResource;
  * @property Carbon|null $updated_at
  * @property-read Cluster $cluster
  */
+#[Table('proxmox_nodes')]
+#[Fillable(['cluster_id', 'name', 'status'])]
 class Node extends Model
 {
     /**
      * Status of a node that Proxmox no longer lists for its cluster.
      */
     public const string MISSING = 'missing';
-
-    protected $table = 'proxmox_nodes';
-
-    protected $fillable = [
-        'cluster_id',
-        'name',
-        'status',
-    ];
 
     /**
      * @return array<string, string>

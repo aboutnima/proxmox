@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Proxmox\Models;
 
+use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Attributes\Hidden;
+use Illuminate\Database\Eloquent\Attributes\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -36,28 +39,23 @@ use Proxmox\ProxmoxManager;
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
+#[Table('proxmox_clusters')]
+#[Fillable([
+    'name',
+    'url',
+    'api_token_id',
+    'api_token_secret',
+    'timeout',
+    'connect_timeout',
+    'verify_ssl',
+    'ca_bundle',
+    'retry_times',
+    'retry_sleep',
+    'is_active',
+])]
+#[Hidden(['api_token_secret'])]
 class Cluster extends Model
 {
-    protected $table = 'proxmox_clusters';
-
-    protected $fillable = [
-        'name',
-        'url',
-        'api_token_id',
-        'api_token_secret',
-        'timeout',
-        'connect_timeout',
-        'verify_ssl',
-        'ca_bundle',
-        'retry_times',
-        'retry_sleep',
-        'is_active',
-    ];
-
-    protected $hidden = [
-        'api_token_secret',
-    ];
-
     protected $attributes = [
         'timeout' => 30,
         'connect_timeout' => 10,
