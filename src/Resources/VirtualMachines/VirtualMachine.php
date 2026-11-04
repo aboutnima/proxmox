@@ -13,7 +13,6 @@ use Proxmox\Exceptions\InvalidConfigurationException;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Models\VirtualMachine as VirtualMachineModel;
 use Proxmox\Proxmox;
-use Proxmox\Resources\Nodes\Node as NodeResource;
 use Proxmox\Resources\Tasks\Task;
 use Proxmox\Support\Identifier;
 use Proxmox\Support\ResourceData;
@@ -189,7 +188,7 @@ class VirtualMachine implements Arrayable, JsonSerializable
      */
     public function resources(): array
     {
-        $config = ResponseData::attributes($this->client->get($this->path('config'), ['current' => 1]));
+        $config = $this->currentConfig();
         $sockets = ResourceData::integer($config['sockets'] ?? 1) ?: 1;
         $cores = ResourceData::integer($config['cores'] ?? 1) ?: 1;
         $balloon = ResourceData::integer($config['balloon'] ?? 0);
@@ -209,17 +208,19 @@ class VirtualMachine implements Arrayable, JsonSerializable
     }
 
     /**
-     * Fetch how far the VM can grow with the node's free CPU, memory (MiB), and storage (GiB).
+     * Fetch the free resources inside the VM's own allocation; node and storage capacity is never read.
      *
-     * "max" is the largest value to pass to setCpu() (cores x sockets), setMemory(), or the
-     * resulting disk size; "additional" is the room left above the current allocation. A stopped VM
-     * only counts free node memory, while a running VM also keeps its current allocation. Disks on
-     * storage that is not listed for VM images have null values.
+     * CPU is a percentage of the VM's vCPUs and memory is in MiB. Memory uses the guest-reported free
+     * memory when ballooning provides it. Disks (GiB, rounded down) compare each disk's size with the
+     * space its volume occupies on storage; "used" is null when the storage does not report it.
+     * Filesystems (GiB) come from the QEMU guest agent and are null when the VM is not running, the
+     * agent is not enabled, or the agent does not respond.
      *
      * @return array{
-     *     cpu: array{max: int, additional: int},
-     *     memory: array{max: int, additional: int},
-     *     disks: array<string, array{storage: string|null, max: int|null, additional: int|null}>,
+     *     cpu: array{vcpus: int, used: float, available: float},
+     *     memory: array{total: int, used: int, available: int},
+     *     disks: array<string, array{storage: string|null, total: int, used: int|null, available: int|null}>,
+     *     filesystems: list<array{mountpoint: string, type: string|null, total: int, used: int, available: int}>|null,
      * }
      *
      * @throws ConnectionException
@@ -229,37 +230,255 @@ class VirtualMachine implements Arrayable, JsonSerializable
      */
     public function availableResources(): array
     {
-        $resources = $this->resources();
-        $running = ($this->status()['status'] ?? null) === 'running';
-        $node = new NodeResource($this->client, $this->node);
-        $nodeStatus = $node->status();
-        $storages = $node->storages('images');
-
-        $cpuInfo = is_array($nodeStatus['cpuinfo'] ?? null) ? $nodeStatus['cpuinfo'] : [];
-        $nodeMemory = is_array($nodeStatus['memory'] ?? null) ? $nodeStatus['memory'] : [];
-        $maxCpus = ResourceData::integer($cpuInfo['cpus'] ?? 0);
-        $memory = $resources['memory']['size'];
-        $maxMemory = ResourceData::mebibytes($nodeMemory['free'] ?? 0) + ($running ? $memory : 0);
-        $disks = [];
-
-        foreach ($resources['disks'] as $key => $disk) {
-            $available = $disk['storage'] !== null ? ($storages[$disk['storage']]['available'] ?? null) : null;
-
-            $disks[$key] = [
-                'storage' => $disk['storage'],
-                'max' => $available === null ? null : $disk['size'] + $available,
-                'additional' => $available,
-            ];
-        }
+        $status = $this->status();
+        $running = ($status['status'] ?? null) === 'running';
+        $cpu = $running ? min(100.0, ResourceData::percent($status['cpu'] ?? 0)) : 0.0;
+        $total = ResourceData::mebibytes($status['maxmem'] ?? 0);
+        $available = ! $running ? $total : (array_key_exists('freemem', $status)
+            ? ResourceData::mebibytes($status['freemem'])
+            : max(0, $total - ResourceData::mebibytes($status['mem'] ?? 0)));
+        $available = min($total, $available);
 
         return [
             'cpu' => [
-                'max' => $maxCpus,
-                'additional' => max(0, $maxCpus - $resources['cpu']['sockets'] * $resources['cpu']['cores']),
+                'vcpus' => ResourceData::integer($status['cpus'] ?? 0),
+                'used' => $cpu,
+                'available' => round(100 - $cpu, 2),
             ],
-            'memory' => ['max' => $maxMemory, 'additional' => max(0, $maxMemory - $memory)],
-            'disks' => $disks,
+            'memory' => ['total' => $total, 'used' => $total - $available, 'available' => $available],
+            'disks' => $this->diskUsage(),
+            'filesystems' => $running && ResourceData::integer($status['agent'] ?? 0) === 1 ? $this->filesystems() : null,
         ];
+    }
+
+    /**
+     * Fetch CPU usage over time as a percentage of the VM's vCPUs.
+     *
+     * Points where Proxmox has no data, such as while the VM was stopped, have null values.
+     *
+     * @param  'hour'|'day'|'week'|'month'|'year'  $timeframe
+     * @param  'average'|'max'  $consolidation
+     * @return list<array{time: int, vcpus: int|null, percent: float|null}>
+     *
+     * @throws ConnectionException
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function cpuHistory(string $timeframe = 'hour', string $consolidation = 'average'): array
+    {
+        return array_map(static function (array $point): array {
+            $vcpus = ResourceData::nullableNumber($point['maxcpu'] ?? null, 0);
+            $cpu = ResourceData::nullableNumber($point['cpu'] ?? null, 6);
+
+            return [
+                'time' => ResourceData::integer($point['time'] ?? 0),
+                'vcpus' => $vcpus === null ? null : (int) $vcpus,
+                'percent' => $cpu === null ? null : ResourceData::percent($cpu),
+            ];
+        }, $this->history($timeframe, $consolidation));
+    }
+
+    /**
+     * Fetch memory usage over time in MiB, rounded down.
+     *
+     * @param  'hour'|'day'|'week'|'month'|'year'  $timeframe
+     * @param  'average'|'max'  $consolidation
+     * @return list<array{time: int, total: int|null, used: int|null}>
+     *
+     * @throws ConnectionException
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function memoryHistory(string $timeframe = 'hour', string $consolidation = 'average'): array
+    {
+        return array_map(static fn (array $point): array => [
+            'time' => ResourceData::integer($point['time'] ?? 0),
+            'total' => ResourceData::nullableNumber($point['maxmem'] ?? null) === null ? null : ResourceData::mebibytes($point['maxmem']),
+            'used' => ResourceData::nullableNumber($point['mem'] ?? null) === null ? null : ResourceData::mebibytes($point['mem']),
+        ], $this->history($timeframe, $consolidation));
+    }
+
+    /**
+     * Fetch network traffic over time in bytes per second.
+     *
+     * @param  'hour'|'day'|'week'|'month'|'year'  $timeframe
+     * @param  'average'|'max'  $consolidation
+     * @return list<array{time: int, in: float|null, out: float|null}>
+     *
+     * @throws ConnectionException
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function networkHistory(string $timeframe = 'hour', string $consolidation = 'average'): array
+    {
+        return array_map(static fn (array $point): array => [
+            'time' => ResourceData::integer($point['time'] ?? 0),
+            'in' => ResourceData::nullableNumber($point['netin'] ?? null),
+            'out' => ResourceData::nullableNumber($point['netout'] ?? null),
+        ], $this->history($timeframe, $consolidation));
+    }
+
+    /**
+     * Fetch disk I/O over time in bytes per second.
+     *
+     * @param  'hour'|'day'|'week'|'month'|'year'  $timeframe
+     * @param  'average'|'max'  $consolidation
+     * @return list<array{time: int, read: float|null, write: float|null}>
+     *
+     * @throws ConnectionException
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function diskHistory(string $timeframe = 'hour', string $consolidation = 'average'): array
+    {
+        return array_map(static fn (array $point): array => [
+            'time' => ResourceData::integer($point['time'] ?? 0),
+            'read' => ResourceData::nullableNumber($point['diskread'] ?? null),
+            'write' => ResourceData::nullableNumber($point['diskwrite'] ?? null),
+        ], $this->history($timeframe, $consolidation));
+    }
+
+    /**
+     * @return list<array<array-key, mixed>>
+     *
+     * @throws ConnectionException
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    private function history(string $timeframe, string $consolidation): array
+    {
+        if (! in_array($timeframe, ['hour', 'day', 'week', 'month', 'year'], true)) {
+            throw new InvalidArgumentException('timeframe must be hour, day, week, month, or year.');
+        }
+
+        if (! in_array($consolidation, ['average', 'max'], true)) {
+            throw new InvalidArgumentException('consolidation must be average or max.');
+        }
+
+        $points = [];
+
+        foreach (ResponseData::list($this->client->get($this->path('rrddata'), [
+            'timeframe' => $timeframe,
+            'cf' => strtoupper($consolidation),
+        ])) as $point) {
+            if (! is_int($point['time'] ?? null)) {
+                continue;
+            }
+
+            $points[] = $point;
+        }
+
+        return $points;
+    }
+
+    /**
+     * @return array<array-key, mixed>
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    private function currentConfig(): array
+    {
+        return ResponseData::attributes($this->client->get($this->path('config'), ['current' => 1]));
+    }
+
+    /**
+     * Compare each disk's size with the space its volume occupies, listing only this VM's volumes.
+     *
+     * @return array<string, array{storage: string|null, total: int, used: int|null, available: int|null}>
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    private function diskUsage(): array
+    {
+        $volumes = ResourceData::volumes($this->currentConfig());
+        $usage = [];
+
+        foreach (array_unique(array_filter(array_column($volumes, 'storage'))) as $storage) {
+            $content = ResponseData::list($this->client->get(
+                'nodes/'.rawurlencode($this->node).'/storage/'.rawurlencode($storage).'/content',
+                ['vmid' => $this->vmid],
+            ));
+
+            foreach ($content as $volume) {
+                if (is_string($volume['volid'] ?? null) && ResourceData::nullableNumber($volume['used'] ?? null) !== null) {
+                    $usage[$volume['volid']] = max(0, ResourceData::integer($volume['used']));
+                }
+            }
+        }
+
+        $disks = [];
+
+        foreach ($volumes as $key => $volume) {
+            $used = array_key_exists($volume['volume'], $usage) ? min($volume['bytes'], $usage[$volume['volume']]) : null;
+
+            $disks[$key] = [
+                'storage' => $volume['storage'],
+                'total' => ResourceData::gibibytes($volume['bytes']),
+                'used' => $used === null ? null : ResourceData::gibibytes($used),
+                'available' => $used === null ? null : ResourceData::gibibytes($volume['bytes'] - $used),
+            ];
+        }
+
+        return $disks;
+    }
+
+    /**
+     * @return list<array{mountpoint: string, type: string|null, total: int, used: int, available: int}>|null
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    private function filesystems(): ?array
+    {
+        try {
+            $response = ResponseData::attributes($this->client->get($this->path('agent/get-fsinfo')));
+        } catch (RequestException $exception) {
+            // Proxmox answers 500 when the guest agent is not running inside the VM.
+            if ($exception->response->serverError()) {
+                return null;
+            }
+
+            throw $exception;
+        }
+
+        $filesystems = [];
+
+        foreach (is_array($response['result'] ?? null) ? $response['result'] : [] as $filesystem) {
+            if (! is_array($filesystem) || ! is_string($filesystem['mountpoint'] ?? null) || ! array_key_exists('total-bytes', $filesystem)) {
+                continue;
+            }
+
+            $total = ResourceData::integer($filesystem['total-bytes']);
+            $used = min($total, ResourceData::integer($filesystem['used-bytes'] ?? 0));
+
+            $filesystems[] = [
+                'mountpoint' => $filesystem['mountpoint'],
+                'type' => is_string($filesystem['type'] ?? null) ? $filesystem['type'] : null,
+                'total' => ResourceData::gibibytes($total),
+                'used' => ResourceData::gibibytes($used),
+                'available' => ResourceData::gibibytes($total - $used),
+            ];
+        }
+
+        return $filesystems;
     }
 
     /**

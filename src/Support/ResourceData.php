@@ -28,6 +28,16 @@ final class ResourceData
         return 0;
     }
 
+    /**
+     * Return a rounded number, or null when Proxmox omitted the value (for example, while a VM was stopped).
+     */
+    public static function nullableNumber(mixed $value, int $precision = 2): ?float
+    {
+        return is_int($value) || is_float($value) || (is_string($value) && is_numeric($value))
+            ? round((float) $value, $precision)
+            : null;
+    }
+
     public static function percent(mixed $fraction): float
     {
         return is_int($fraction) || is_float($fraction) || (is_string($fraction) && is_numeric($fraction))
@@ -64,12 +74,26 @@ final class ResourceData
     }
 
     /**
-     * Extract guest disks from a VM configuration, skipping CD-ROMs and Cloud-Init drives.
+     * Extract guest disks from a VM configuration in GiB, skipping CD-ROMs and Cloud-Init drives.
      *
      * @param  array<array-key, mixed>  $config
      * @return array<string, array{storage: string|null, size: int}>
      */
     public static function disks(array $config): array
+    {
+        return array_map(
+            fn (array $volume): array => ['storage' => $volume['storage'], 'size' => self::gibibytes($volume['bytes'])],
+            self::volumes($config),
+        );
+    }
+
+    /**
+     * Extract guest disk volumes from a VM configuration with their sizes in bytes.
+     *
+     * @param  array<array-key, mixed>  $config
+     * @return array<string, array{volume: string, storage: string|null, bytes: int}>
+     */
+    public static function volumes(array $config): array
     {
         $disks = [];
 
@@ -85,8 +109,9 @@ final class ResourceData
             }
 
             $disks[$key] = [
+                'volume' => $volume,
                 'storage' => preg_match('/^([a-zA-Z][a-zA-Z0-9_.-]*):/', $volume, $storage) === 1 ? $storage[1] : null,
-                'size' => self::gibibytes(self::diskSize($value)),
+                'bytes' => self::diskSize($value),
             ];
         }
 

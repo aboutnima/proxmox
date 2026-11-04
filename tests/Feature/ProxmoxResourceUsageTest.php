@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Http\Client\Request;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Facades\Proxmox;
@@ -169,38 +170,136 @@ it('rejects invalid storage content types and storage listings without names', f
     Http::assertSentCount(1);
 });
 
-it('calculates how far a VM can grow on its node and storage', function (string $status, array $memory) {
-    fakeVirtualMachineConfig([
-        'cores' => 2,
-        'memory' => 4096,
-        'scsi0' => 'local-lvm:vm-101-disk-0,size=32G',
-        'scsi1' => 'backup:vm-101-disk-1,size=8G',
-        'sockets' => 2,
-    ]);
+function assertNoNodeCapacityRequests(): void
+{
+    Http::assertNotSent(fn (Request $request): bool => str_ends_with($request->url(), '/nodes/my/status')
+        || str_contains($request->url(), '/nodes/my/storage?')
+        || str_contains($request->url(), '/nodes/my/qemu?')
+        || str_contains($request->url(), '/cluster/'));
+}
 
-    Http::fake([
-        '*/nodes/my/qemu/101/status/current' => Http::response(['data' => ['status' => $status]]),
-        '*/nodes/my/status' => Http::response(['data' => [
-            'cpuinfo' => ['cpus' => 16],
-            'memory' => ['free' => 2048 * USAGE_MIB, 'total' => 65536 * USAGE_MIB, 'used' => 63488 * USAGE_MIB],
-        ]]),
-        '*/nodes/my/storage*' => Http::response(['data' => [
-            ['avail' => 400 * USAGE_GIB, 'storage' => 'local-lvm', 'total' => 500 * USAGE_GIB, 'used' => 100 * USAGE_GIB],
-        ]]),
-    ]);
+function fakeAvailableResources(array $status, array $config = [], array $content = [], ?array $agent = null): void
+{
+    Http::fake(array_filter([
+        '*/nodes/my/qemu/101/status/current' => Http::response(['data' => $status]),
+        '*/nodes/my/qemu/101/config*' => Http::response(['data' => $config + ['digest' => 'abc']]),
+        '*/nodes/my/storage/local-lvm/content*' => Http::response(['data' => $content]),
+        '*/nodes/my/qemu/101/agent/get-fsinfo' => $agent === null ? null : Http::response(...$agent),
+    ]));
+}
+
+it('limits available resources to the VM allocation, its own volumes, and guest filesystems', function () {
+    fakeAvailableResources(
+        ['agent' => 1, 'cpu' => 0.25, 'cpus' => 2, 'freemem' => 3072 * USAGE_MIB, 'maxmem' => 4096 * USAGE_MIB, 'mem' => 2048 * USAGE_MIB, 'status' => 'running'],
+        ['scsi0' => 'local-lvm:vm-101-disk-0,size=32G', 'virtio0' => '/dev/disk/by-id/ata-disk,size=2G'],
+        [['format' => 'raw', 'size' => 32 * USAGE_GIB, 'used' => 6 * USAGE_GIB, 'vmid' => 101, 'volid' => 'local-lvm:vm-101-disk-0']],
+        [['data' => ['result' => [
+            ['mountpoint' => '/', 'name' => 'sda1', 'total-bytes' => 30 * USAGE_GIB, 'type' => 'ext4', 'used-bytes' => 6 * USAGE_GIB],
+            ['mountpoint' => '/proc', 'name' => 'proc', 'type' => 'proc'],
+        ]]]],
+    );
 
     expect(usageVirtualMachine()->availableResources())->toBe([
-        'cpu' => ['max' => 16, 'additional' => 12],
-        'memory' => $memory,
+        'cpu' => ['vcpus' => 2, 'used' => 25.0, 'available' => 75.0],
+        'memory' => ['total' => 4096, 'used' => 1024, 'available' => 3072],
         'disks' => [
-            'scsi0' => ['storage' => 'local-lvm', 'max' => 432, 'additional' => 400],
-            'scsi1' => ['storage' => 'backup', 'max' => null, 'additional' => null],
+            'scsi0' => ['storage' => 'local-lvm', 'total' => 32, 'used' => 6, 'available' => 26],
+            'virtio0' => ['storage' => null, 'total' => 2, 'used' => null, 'available' => null],
+        ],
+        'filesystems' => [
+            ['mountpoint' => '/', 'type' => 'ext4', 'total' => 30, 'used' => 6, 'available' => 24],
         ],
     ]);
 
-    Http::assertSent(fn (Request $request): bool => $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/storage?enabled=1&content=images');
+    Http::assertSent(fn (Request $request): bool => $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/storage/local-lvm/content?vmid=101');
+    assertNoNodeCapacityRequests();
     Http::assertSentCount(4);
+});
+
+it('reports disk usage for a stopped VM without asking the guest agent', function () {
+    fakeAvailableResources(
+        ['agent' => 1, 'cpus' => 4, 'maxmem' => 8192 * USAGE_MIB, 'status' => 'stopped'],
+        ['scsi0' => 'local-lvm:vm-101-disk-0,size=32G', 'scsi1' => 'local-lvm:vm-101-disk-1,size=10G'],
+        [
+            ['size' => 32 * USAGE_GIB, 'used' => 40 * USAGE_GIB, 'volid' => 'local-lvm:vm-101-disk-0'],
+            ['size' => 10 * USAGE_GIB, 'volid' => 'local-lvm:vm-101-disk-1'],
+        ],
+    );
+
+    expect(usageVirtualMachine()->availableResources())->toBe([
+        'cpu' => ['vcpus' => 4, 'used' => 0.0, 'available' => 100.0],
+        'memory' => ['total' => 8192, 'used' => 0, 'available' => 8192],
+        'disks' => [
+            'scsi0' => ['storage' => 'local-lvm', 'total' => 32, 'used' => 32, 'available' => 0],
+            'scsi1' => ['storage' => 'local-lvm', 'total' => 10, 'used' => null, 'available' => null],
+        ],
+        'filesystems' => null,
+    ]);
+
+    Http::assertSentCount(3);
+});
+
+it('falls back to host-side memory usage and skips the agent when it is not enabled', function () {
+    fakeAvailableResources(['cpu' => 1.5, 'cpus' => 2, 'maxmem' => 2048 * USAGE_MIB, 'mem' => 512 * USAGE_MIB, 'status' => 'running']);
+
+    expect(usageVirtualMachine()->availableResources())->toBe([
+        'cpu' => ['vcpus' => 2, 'used' => 100.0, 'available' => 0.0],
+        'memory' => ['total' => 2048, 'used' => 512, 'available' => 1536],
+        'disks' => [],
+        'filesystems' => null,
+    ]);
+
+    Http::assertSentCount(2);
+});
+
+it('returns null filesystems when the guest agent is not running', function () {
+    fakeAvailableResources(
+        ['agent' => 1, 'cpus' => 1, 'maxmem' => 1024 * USAGE_MIB, 'mem' => 0, 'status' => 'running'],
+        agent: [['data' => null], 500],
+    );
+
+    expect(usageVirtualMachine()->availableResources()['filesystems'])->toBeNull();
+});
+
+it('still throws guest agent permission errors', function () {
+    fakeAvailableResources(['agent' => 1, 'status' => 'running'], agent: [['errors' => ['permission' => 'denied']], 403]);
+
+    expect(fn () => usageVirtualMachine()->availableResources())->toThrow(RequestException::class, '403');
+});
+
+it('maps RRD chart data for CPU, memory, network, and disk I/O', function () {
+    Http::fake(['*/nodes/my/qemu/101/rrddata*' => Http::response(['data' => [
+        ['cpu' => 0.123456, 'diskread' => 10.555, 'diskwrite' => 20, 'maxcpu' => 2, 'maxmem' => 4096 * USAGE_MIB, 'mem' => 1024 * USAGE_MIB, 'netin' => 300.126, 'netout' => 400, 'time' => 1_700_000_000],
+        ['time' => 1_700_000_060],
+        ['cpu' => 0.5],
+    ]])]);
+
+    $vm = usageVirtualMachine();
+
+    expect($vm->cpuHistory())->toBe([
+        ['time' => 1_700_000_000, 'vcpus' => 2, 'percent' => 12.35],
+        ['time' => 1_700_000_060, 'vcpus' => null, 'percent' => null],
+    ])->and($vm->memoryHistory('day', 'max'))->toBe([
+        ['time' => 1_700_000_000, 'total' => 4096, 'used' => 1024],
+        ['time' => 1_700_000_060, 'total' => null, 'used' => null],
+    ])->and($vm->networkHistory('week'))->toBe([
+        ['time' => 1_700_000_000, 'in' => 300.13, 'out' => 400.0],
+        ['time' => 1_700_000_060, 'in' => null, 'out' => null],
+    ])->and($vm->diskHistory('year'))->toBe([
+        ['time' => 1_700_000_000, 'read' => 10.56, 'write' => 20.0],
+        ['time' => 1_700_000_060, 'read' => null, 'write' => null],
+    ]);
+
+    Http::assertSent(fn (Request $request): bool => $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/qemu/101/rrddata?timeframe=hour&cf=AVERAGE');
+    Http::assertSent(fn (Request $request): bool => $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/qemu/101/rrddata?timeframe=day&cf=MAX');
+    Http::assertSentCount(4);
+});
+
+it('rejects invalid chart timeframes and consolidation functions before requesting', function (string $timeframe, string $consolidation, string $message) {
+    expect(fn () => usageVirtualMachine()->cpuHistory($timeframe, $consolidation))->toThrow(InvalidArgumentException::class, $message);
+
+    Http::assertNothingSent();
 })->with([
-    'running VM keeps its allocation' => ['running', ['max' => 6144, 'additional' => 2048]],
-    'stopped VM needs free node memory' => ['stopped', ['max' => 2048, 'additional' => 0]],
+    ['minute', 'average', 'timeframe'],
+    ['hour', 'min', 'consolidation'],
 ]);

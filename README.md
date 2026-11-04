@@ -338,10 +338,11 @@ $vm->resources();          // Applied allocation from config?current=1 (pending 
 //  'memory' => ['size' => 4096, 'balloon' => null],
 //  'disks' => ['scsi0' => ['storage' => 'local-lvm', 'size' => 32]]]
 
-$vm->availableResources(); // How far the VM can grow on its node and storage.
-// ['cpu' => ['max' => 16, 'additional' => 12],
-//  'memory' => ['max' => 24576, 'additional' => 20480],
-//  'disks' => ['scsi0' => ['storage' => 'local-lvm', 'max' => 432, 'additional' => 400]]]
+$vm->availableResources(); // Free resources inside the VM's own allocation only.
+// ['cpu' => ['vcpus' => 2, 'used' => 25.0, 'available' => 75.0], // Percent of the VM's vCPUs
+//  'memory' => ['total' => 4096, 'used' => 1024, 'available' => 3072],
+//  'disks' => ['scsi0' => ['storage' => 'local-lvm', 'total' => 32, 'used' => 6, 'available' => 26]],
+//  'filesystems' => [['mountpoint' => '/', 'type' => 'ext4', 'total' => 30, 'used' => 6, 'available' => 24]]]
 
 $node = Proxmox::node('pve1');
 
@@ -356,7 +357,27 @@ $node->storages('images');  // Enabled storages keyed by name; omit the content 
 
 `resources()` lists `ide`, `sata`, `scsi`, and `virtio` disks, and skips CD-ROM and Cloud-Init drives. `balloon` is the minimum memory with ballooning, or `null` when ballooning is not configured or is disabled.
 
-`availableResources()` is based on free node memory and free storage space, not on allocations. For CPU and memory, `max` is the largest value to request: cores × sockets for `setCpu()`, or MiB for `setMemory()`. For a disk, `max` is the largest resulting disk size. `additional` is the room left above the current allocation and can be passed directly to `growDisk()`. A running VM counts its current memory plus free node memory; a stopped VM counts only free node memory, because it needs that memory to start. Disks on storage that isn't listed for VM images, and passthrough disks, have `null` values. Proxmox allows memory and thin-provisioned storage to be overcommitted, so compare `$node->resources()` allocation with the totals when planning capacity.
+`availableResources()` reads only the VM's own data and never reports node or storage capacity, so it is safe to show to the VM's owner. CPU is a percentage of the VM's vCPUs. Memory uses the guest-reported free memory when ballooning provides it, otherwise the allocation minus host-side usage; a stopped VM reports its full allocation as available.
+
+Two disk views are returned:
+
+- `disks` works without a guest agent, even for stopped VMs. It compares each disk's size with the space its volume occupies on storage, listing only this VM's volumes (`GET /nodes/{node}/storage/{storage}/content?vmid={vmid}`). It measures allocated blocks, so deleted files keep counting until the guest trims them; enable `discard=on` on the disk and run `fstrim` in the guest to keep it accurate. `used` and `available` are `null` when the storage does not report usage (for example thick LVM) and for passthrough disks.
+- `filesystems` is what the guest sees, from the QEMU guest agent (`agent/get-fsinfo`). It is `null` when the VM is stopped, the agent is not enabled in the VM options, or `qemu-guest-agent` is not running in the guest.
+
+Use `$node->resources()` and `$node->storages()` for host capacity planning; those are for administrators and should not be shown to tenants.
+
+### Usage Charts
+
+Proxmox keeps usage history for each VM (`GET /nodes/{node}/qemu/{vmid}/rrddata`). Each method returns a list of points ordered by time, ready for a chart library:
+
+```php
+$vm->cpuHistory();                 // [['time' => 1700000000, 'vcpus' => 2, 'percent' => 12.35], ...]
+$vm->memoryHistory('day');         // [['time' => 1700000000, 'total' => 4096, 'used' => 1024], ...] MiB
+$vm->networkHistory('week');       // [['time' => 1700000000, 'in' => 300.13, 'out' => 400.0], ...] bytes/s
+$vm->diskHistory('month', 'max');  // [['time' => 1700000000, 'read' => 10.56, 'write' => 20.0], ...] bytes/s
+```
+
+`time` is a Unix timestamp. The timeframe is `hour` (default), `day`, `week`, `month`, or `year`; longer timeframes return coarser points. The consolidation is `average` (default) or `max`, which is useful for spotting peaks. Values are `null` for points without data, such as while the VM was stopped.
 
 ### Operate a QEMU Virtual Machine
 
