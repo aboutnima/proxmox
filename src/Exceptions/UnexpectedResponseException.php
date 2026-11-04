@@ -43,6 +43,11 @@ class UnexpectedResponseException extends UnexpectedValueException implements Pr
         return new self('Expected a node name in the Proxmox node listing.');
     }
 
+    public static function expectedStorage(): self
+    {
+        return new self('Expected a storage name in the Proxmox storage listing.');
+    }
+
     public static function expectedTaskStatus(): self
     {
         return new self('Expected a running or stopped Proxmox task status.');

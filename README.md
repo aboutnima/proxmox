@@ -321,6 +321,43 @@ $vm->refresh();                 // Fetches fresh data, updates the snapshot, ret
 
 HTTP 404 responses throw when selecting a VM. Node names and VM IDs are validated before requesting their data. VM IDs must be integers (or integer strings) between 100 and 999999999.
 
+### Resources, Usage, and Capacity
+
+Read categorized resource data instead of raw status and configuration arrays. Memory is in MiB and disk sizes are in GiB, matching `setMemory()` and `growDisk()`. Sizes are rounded down. Each call sends fresh requests.
+
+```php
+$vm = Proxmox::node('pve1')->virtualMachine(101);
+
+$vm->usage();              // Live usage from status/current.
+// ['status' => 'running', 'uptime' => 3600, 'cpu' => ['vcpus' => 4, 'percent' => 12.35],
+//  'memory' => ['total' => 4096, 'used' => 1024, 'free' => 3072],
+//  'network' => ['in' => 300, 'out' => 400], 'disk' => ['read' => 1000, 'write' => 2000]] // I/O in bytes
+
+$vm->resources();          // Applied allocation from config?current=1 (pending changes are ignored).
+// ['cpu' => ['sockets' => 1, 'cores' => 4, 'vcpus' => 4],
+//  'memory' => ['size' => 4096, 'balloon' => null],
+//  'disks' => ['scsi0' => ['storage' => 'local-lvm', 'size' => 32]]]
+
+$vm->availableResources(); // How far the VM can grow on its node and storage.
+// ['cpu' => ['max' => 16, 'additional' => 12],
+//  'memory' => ['max' => 24576, 'additional' => 20480],
+//  'disks' => ['scsi0' => ['storage' => 'local-lvm', 'max' => 432, 'additional' => 400]]]
+
+$node = Proxmox::node('pve1');
+
+$node->resources();         // Capacity, live usage, and allocation across non-template VMs.
+// ['cpu' => ['cores' => 16, 'percent' => 25.0, 'allocated' => 6],
+//  'memory' => ['total' => 65536, 'used' => 24576, 'free' => 40960, 'allocated' => 12288]]
+
+$node->storages('images');  // Enabled storages keyed by name; omit the content type for all.
+// ['local-lvm' => ['type' => 'lvmthin', 'content' => ['images', 'rootdir'], 'shared' => false,
+//  'active' => true, 'total' => 500, 'used' => 100, 'available' => 400]]
+```
+
+`resources()` lists `ide`, `sata`, `scsi`, and `virtio` disks, and skips CD-ROM and Cloud-Init drives. `balloon` is the minimum memory with ballooning, or `null` when ballooning is not configured or is disabled.
+
+`availableResources()` is based on free node memory and free storage space, not on allocations. For CPU and memory, `max` is the largest value to request: cores × sockets for `setCpu()`, or MiB for `setMemory()`. For a disk, `max` is the largest resulting disk size. `additional` is the room left above the current allocation and can be passed directly to `growDisk()`. A running VM counts its current memory plus free node memory; a stopped VM counts only free node memory, because it needs that memory to start. Disks on storage that isn't listed for VM images, and passthrough disks, have `null` values. Proxmox allows memory and thin-provisioned storage to be overcommitted, so compare `$node->resources()` allocation with the totals when planning capacity.
+
 ### Operate a QEMU Virtual Machine
 
 Power operations return a `Task`. Wait for it when the operation must finish before continuing:
@@ -551,6 +588,7 @@ src/
 ├── Exceptions/
 ├── Support/
 │   ├── Identifier.php
+│   ├── ResourceData.php
 │   └── ResponseData.php
 ├── Facades/
 ├── Inventory.php

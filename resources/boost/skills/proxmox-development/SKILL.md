@@ -39,6 +39,8 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 - `node($name)->virtualMachine($id)` immediately fetches runtime status and returns a `Proxmox\Resources\VirtualMachines\VirtualMachine` object. An ID is required; use `virtualMachines()->all()` for a listing.
 - VM `toArray()` and JSON serialization expose the fetched snapshot without extra requests. `status()` fetches fresh status without changing the snapshot; `refresh()` updates the snapshot and returns the same VM object. `config()` fetches configuration separately.
 - Node names and VM IDs are validated before fetching. IDs must be integers or integer strings between 100 and 999999999. HTTP 404 responses throw when selecting a VM.
+- For categorized data, use VM `usage()` (live status), `resources()` (applied allocation; pending changes ignored), and `availableResources()` (how far the VM can grow). On a node, use `resources()` (capacity, live usage, and allocation across non-template VMs) and `storages('images')` (enabled storages keyed by name). Memory is in MiB and disks are in GiB, rounded down, matching `setMemory()` and `growDisk()`. Each call sends fresh requests.
+- In `availableResources()`, `max` is the largest value for `setCpu()` (cores × sockets) or `setMemory()`, or the largest resulting disk size. `additional` is the room above the current allocation and can be passed to `growDisk()`. The values are based on free node memory and free storage space. Disks on storage that isn't listed for VM images are `null`.
 
 ### 3. Create VMs and track tasks
 
@@ -77,7 +79,7 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 - `config/proxmox.php` for the mode, connection, timeout, retry, TLS settings, and inventory model classes.
 - `src/Models/` for the inventory `Cluster`, `Node`, and `VirtualMachine` models, and `src/Concerns/HasVirtualMachines.php` for owners.
 - `src/Facades/Proxmox.php` for the facade methods.
-- `src/Resources/Nodes/Node.php` for node status, VM operations, and image listings.
+- `src/Resources/Nodes/Node.php` for node status, resources, storages, VM operations, and image listings.
 - `src/Resources/VirtualMachines/` for fetched VMs, CPU/memory updates, disk resizing, listing and creation operations, creation key types, and VM configuration.
 - `src/Resources/Tasks/Task.php` for background tasks.
 - `src/Exceptions/` for package exceptions.

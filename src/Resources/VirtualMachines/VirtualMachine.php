@@ -13,8 +13,10 @@ use Proxmox\Exceptions\InvalidConfigurationException;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Models\VirtualMachine as VirtualMachineModel;
 use Proxmox\Proxmox;
+use Proxmox\Resources\Nodes\Node as NodeResource;
 use Proxmox\Resources\Tasks\Task;
 use Proxmox\Support\Identifier;
+use Proxmox\Support\ResourceData;
 use Proxmox\Support\ResponseData;
 
 /**
@@ -125,6 +127,139 @@ class VirtualMachine implements Arrayable, JsonSerializable
     public function config(): array
     {
         return ResponseData::attributes($this->client->get($this->path('config')));
+    }
+
+    /**
+     * Fetch live usage. Memory is in MiB; network and disk I/O are byte counters since the VM started.
+     *
+     * @return array{
+     *     status: string|null,
+     *     uptime: int,
+     *     cpu: array{vcpus: int, percent: float},
+     *     memory: array{total: int, used: int, free: int},
+     *     network: array{in: int, out: int},
+     *     disk: array{read: int, write: int},
+     * }
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function usage(): array
+    {
+        $status = $this->status();
+        $total = ResourceData::mebibytes($status['maxmem'] ?? 0);
+        $used = ResourceData::mebibytes($status['mem'] ?? 0);
+
+        return [
+            'status' => is_string($status['status'] ?? null) ? $status['status'] : null,
+            'uptime' => ResourceData::integer($status['uptime'] ?? 0),
+            'cpu' => [
+                'vcpus' => ResourceData::integer($status['cpus'] ?? 0),
+                'percent' => ResourceData::percent($status['cpu'] ?? 0),
+            ],
+            'memory' => ['total' => $total, 'used' => $used, 'free' => max(0, $total - $used)],
+            'network' => [
+                'in' => ResourceData::integer($status['netin'] ?? 0),
+                'out' => ResourceData::integer($status['netout'] ?? 0),
+            ],
+            'disk' => [
+                'read' => ResourceData::integer($status['diskread'] ?? 0),
+                'write' => ResourceData::integer($status['diskwrite'] ?? 0),
+            ],
+        ];
+    }
+
+    /**
+     * Fetch the applied CPU, memory (MiB), and disk (GiB) allocation, ignoring pending changes.
+     *
+     * "balloon" is the minimum memory with ballooning, or null when it is not configured or disabled.
+     *
+     * @return array{
+     *     cpu: array{sockets: int, cores: int, vcpus: int},
+     *     memory: array{size: int, balloon: int|null},
+     *     disks: array<string, array{storage: string|null, size: int}>,
+     * }
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function resources(): array
+    {
+        $config = ResponseData::attributes($this->client->get($this->path('config'), ['current' => 1]));
+        $sockets = ResourceData::integer($config['sockets'] ?? 1) ?: 1;
+        $cores = ResourceData::integer($config['cores'] ?? 1) ?: 1;
+        $balloon = ResourceData::integer($config['balloon'] ?? 0);
+
+        return [
+            'cpu' => [
+                'sockets' => $sockets,
+                'cores' => $cores,
+                'vcpus' => ResourceData::integer($config['vcpus'] ?? 0) ?: $sockets * $cores,
+            ],
+            'memory' => [
+                'size' => ResourceData::memory($config['memory'] ?? null),
+                'balloon' => $balloon > 0 ? $balloon : null,
+            ],
+            'disks' => ResourceData::disks($config),
+        ];
+    }
+
+    /**
+     * Fetch how far the VM can grow with the node's free CPU, memory (MiB), and storage (GiB).
+     *
+     * "max" is the largest value to pass to setCpu() (cores x sockets), setMemory(), or the
+     * resulting disk size; "additional" is the room left above the current allocation. A stopped VM
+     * only counts free node memory, while a running VM also keeps its current allocation. Disks on
+     * storage that is not listed for VM images have null values.
+     *
+     * @return array{
+     *     cpu: array{max: int, additional: int},
+     *     memory: array{max: int, additional: int},
+     *     disks: array<string, array{storage: string|null, max: int|null, additional: int|null}>,
+     * }
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function availableResources(): array
+    {
+        $resources = $this->resources();
+        $running = ($this->status()['status'] ?? null) === 'running';
+        $node = new NodeResource($this->client, $this->node);
+        $nodeStatus = $node->status();
+        $storages = $node->storages('images');
+
+        $cpuInfo = is_array($nodeStatus['cpuinfo'] ?? null) ? $nodeStatus['cpuinfo'] : [];
+        $nodeMemory = is_array($nodeStatus['memory'] ?? null) ? $nodeStatus['memory'] : [];
+        $maxCpus = ResourceData::integer($cpuInfo['cpus'] ?? 0);
+        $memory = $resources['memory']['size'];
+        $maxMemory = ResourceData::mebibytes($nodeMemory['free'] ?? 0) + ($running ? $memory : 0);
+        $disks = [];
+
+        foreach ($resources['disks'] as $key => $disk) {
+            $available = $disk['storage'] !== null ? ($storages[$disk['storage']]['available'] ?? null) : null;
+
+            $disks[$key] = [
+                'storage' => $disk['storage'],
+                'max' => $available === null ? null : $disk['size'] + $available,
+                'additional' => $available,
+            ];
+        }
+
+        return [
+            'cpu' => [
+                'max' => $maxCpus,
+                'additional' => max(0, $maxCpus - $resources['cpu']['sockets'] * $resources['cpu']['cores']),
+            ],
+            'memory' => ['max' => $maxMemory, 'additional' => max(0, $maxMemory - $memory)],
+            'disks' => $disks,
+        ];
     }
 
     /**

@@ -14,6 +14,7 @@ use Proxmox\Resources\Tasks\Task;
 use Proxmox\Resources\VirtualMachines\VirtualMachine;
 use Proxmox\Resources\VirtualMachines\VirtualMachines;
 use Proxmox\Support\Identifier;
+use Proxmox\Support\ResourceData;
 use Proxmox\Support\ResponseData;
 
 readonly class Node
@@ -39,6 +40,97 @@ readonly class Node
     public function status(): array
     {
         return ResponseData::attributes($this->client->get('nodes/'.rawurlencode($this->name).'/status'));
+    }
+
+    /**
+     * Fetch the node capacity, live usage, and the CPU and memory allocated to its VMs.
+     *
+     * Memory is in MiB. "allocated" sums all non-template VMs, so it can exceed the total when overcommitted.
+     *
+     * @return array{
+     *     cpu: array{cores: int, percent: float, allocated: int},
+     *     memory: array{total: int, used: int, free: int, allocated: int},
+     * }
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function resources(): array
+    {
+        $status = $this->status();
+        $cpu = is_array($status['cpuinfo'] ?? null) ? $status['cpuinfo'] : [];
+        $memory = is_array($status['memory'] ?? null) ? $status['memory'] : [];
+        $allocatedCpus = 0;
+        $allocatedMemory = 0;
+
+        foreach ($this->virtualMachines()->all() as $vm) {
+            if (ResourceData::integer($vm['template'] ?? 0) === 1) {
+                continue;
+            }
+
+            $allocatedCpus += ResourceData::integer($vm['cpus'] ?? 0);
+            $allocatedMemory += ResourceData::integer($vm['maxmem'] ?? 0);
+        }
+
+        return [
+            'cpu' => [
+                'cores' => ResourceData::integer($cpu['cpus'] ?? 0),
+                'percent' => ResourceData::percent($status['cpu'] ?? 0),
+                'allocated' => $allocatedCpus,
+            ],
+            'memory' => [
+                'total' => ResourceData::mebibytes($memory['total'] ?? 0),
+                'used' => ResourceData::mebibytes($memory['used'] ?? 0),
+                'free' => ResourceData::mebibytes($memory['free'] ?? 0),
+                'allocated' => ResourceData::mebibytes($allocatedMemory),
+            ],
+        ];
+    }
+
+    /**
+     * Fetch enabled storages keyed by name, with sizes in GiB rounded down.
+     *
+     * Pass a content type such as "images" to list only storages that can hold VM disks.
+     *
+     * @return array<string, array{type: string|null, content: list<string>, shared: bool, active: bool, total: int, used: int, available: int}>
+     *
+     * @throws ConnectionException
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function storages(?string $content = null): array
+    {
+        $query = ['enabled' => 1];
+
+        if ($content !== null) {
+            $query['content'] = Identifier::name($content, 'content');
+        }
+
+        $storages = [];
+
+        foreach (ResponseData::list($this->client->get('nodes/'.rawurlencode($this->name).'/storage', $query)) as $storage) {
+            if (! is_string($storage['storage'] ?? null) || $storage['storage'] === '') {
+                throw UnexpectedResponseException::expectedStorage();
+            }
+
+            $storages[$storage['storage']] = [
+                'type' => is_string($storage['type'] ?? null) ? $storage['type'] : null,
+                'content' => is_string($storage['content'] ?? null) && $storage['content'] !== ''
+                    ? explode(',', $storage['content'])
+                    : [],
+                'shared' => ResourceData::integer($storage['shared'] ?? 0) === 1,
+                'active' => ResourceData::integer($storage['active'] ?? 0) === 1,
+                'total' => ResourceData::gibibytes($storage['total'] ?? 0),
+                'used' => ResourceData::gibibytes($storage['used'] ?? 0),
+                'available' => ResourceData::gibibytes($storage['avail'] ?? 0),
+            ];
+        }
+
+        return $storages;
     }
 
     /**

@@ -4,6 +4,7 @@
 
 ### Added
 
+- VM `usage()`, `resources()`, and `availableResources()`, plus node `resources()` and `storages($content)`, return categorized CPU, memory (MiB), and disk (GiB) data for live usage, the applied allocation, and room to grow.
 - Package modes selected by `php artisan proxmox:install`: `api` (connections from `.env`, no database) and `inventory` (clusters, nodes, and VMs stored in the database). Set with `PROXMOX_MODE`.
 - Inventory migration `create_proxmox_tables` (`proxmox_clusters`, `proxmox_nodes`, `proxmox_virtual_machines`) published by the installer or the `proxmox-migrations` tag. The installer never publishes it twice.
 - `Proxmox\Models\Cluster`, `Node`, and `VirtualMachine` Eloquent models, overridable through `proxmox.models`. Cluster API token secrets are encrypted and hidden.
