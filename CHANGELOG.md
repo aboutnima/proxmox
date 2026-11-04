@@ -28,8 +28,6 @@
 
 ### Changed
 
-- **Breaking:** requires Laravel 13 (and Orchestra Testbench 11 for development). Laravel 12 support is dropped.
-- Inventory models declare their table, fillable, and hidden columns with Eloquent attributes (`#[Table]`, `#[Fillable]`, `#[Hidden]`). Custom models that extend them inherit these attributes.
 - **Breaking:** inventory `VirtualMachine` Eloquent operations now change database records only. Removed automatic provisioning/destruction, model management methods, `resource()`, `api()`, `creationTask()`, and `withoutProxmox()`. Use the VM resource's `make($record)` for live operations and provision/delete inventory explicitly. VMID collisions and missing remote VMs are no longer retried or silently accepted.
 - **Breaking:** removed `ClusterVirtualMachines` and `Proxmox::virtualMachines()`. List VMs with `Proxmox::node($node)->virtualMachines()->all()`.
 - **Breaking:** resource classes use the domain namespaces `Proxmox\Resources\Nodes`, `Proxmox\Resources\VirtualMachines`, and `Proxmox\Resources\Tasks`. Update direct class imports.
