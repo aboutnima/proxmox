@@ -439,17 +439,19 @@ class VirtualMachine implements Arrayable, JsonSerializable
     }
 
     /**
-     * @return list<array{mountpoint: string, type: string|null, total: int, used: int, available: int}>|null
+     * Run a read-only guest agent command and return its "result", or null when the agent is not running.
+     *
+     * @return array<array-key, mixed>|null
      *
      * @throws ConnectionException
      * @throws InvalidConfigurationException
      * @throws RequestException
      * @throws UnexpectedResponseException
      */
-    private function filesystems(): ?array
+    private function agent(string $command): ?array
     {
         try {
-            $response = ResponseData::attributes($this->client->get($this->path('agent/get-fsinfo')));
+            $response = ResponseData::attributes($this->client->get($this->path('agent/'.$command)));
         } catch (RequestException $exception) {
             // Proxmox answers 500 when the guest agent is not running inside the VM.
             if ($exception->response->serverError()) {
@@ -459,9 +461,28 @@ class VirtualMachine implements Arrayable, JsonSerializable
             throw $exception;
         }
 
+        return is_array($response['result'] ?? null) ? $response['result'] : [];
+    }
+
+    /**
+     * @return list<array{mountpoint: string, type: string|null, total: int, used: int, available: int}>|null
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    private function filesystems(): ?array
+    {
+        $result = $this->agent('get-fsinfo');
+
+        if ($result === null) {
+            return null;
+        }
+
         $filesystems = [];
 
-        foreach (is_array($response['result'] ?? null) ? $response['result'] : [] as $filesystem) {
+        foreach ($result as $filesystem) {
             if (! is_array($filesystem) || ! is_string($filesystem['mountpoint'] ?? null) || ! array_key_exists('total-bytes', $filesystem)) {
                 continue;
             }
