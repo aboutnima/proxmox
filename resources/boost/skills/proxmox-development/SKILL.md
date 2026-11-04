@@ -26,7 +26,7 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 - Optional settings: `PROXMOX_TIMEOUT` (30), `PROXMOX_CONNECT_TIMEOUT` (10), `PROXMOX_VERIFY_SSL` (true), `PROXMOX_CA_BUNDLE` (CA file path or PEM certificate), `PROXMOX_RETRY_TIMES` (0), and `PROXMOX_RETRY_SLEEP` (100 ms). Retries apply only to GET requests that hit connection failures.
 - For several Proxmox servers, add entries under `connections` in `config/proxmox.php` and call `Proxmox::connection('name')`. `PROXMOX_CONNECTION` selects the default. Use `Proxmox::connectUsing($name, $config)` for runtime connections.
 - `inventory` mode (`php artisan proxmox:install --mode=inventory --migrate`) publishes the `create_proxmox_tables` migration for `proxmox_clusters`, `proxmox_nodes`, and `proxmox_virtual_machines`, and reads clusters only from the database. Add clusters with `php artisan proxmox:create-cluster {name}`, or move a `.env` connection with `php artisan proxmox:create-cluster {name} --from-env [--connection=default]`. Keep `proxmox_nodes` current with `php artisan proxmox:sync-nodes [cluster...] [--all]` (schedule `--all`) or `$cluster->syncNodes()`; nodes Proxmox no longer lists are kept with the `missing` status.
-- In inventory mode, `Proxmox::connection($name)` resolves the cluster named `$name`. Add `Proxmox\Concerns\HasVirtualMachines` to owner models such as `User`; `Proxmox\Models\VirtualMachine` has a polymorphic `owner`, `cluster`, `node`, and `resource()` for the live API object.
+- In inventory mode, `Proxmox::connection($name)` resolves the cluster named `$name`. Add `Proxmox\Concerns\HasVirtualMachines` to owner models such as `User`; `Proxmox\Models\VirtualMachine` has a polymorphic `owner`, `cluster`, and `node`. Eloquent operations change inventory records only. Use `Proxmox\Resources\VirtualMachines\VirtualMachine::make($record)` for live VM operations without fetching.
 
 ### 2. Read nodes and VMs
 
@@ -129,28 +129,40 @@ $task = Proxmox::node('pve1')->virtualMachines()->create([
 $task->wait();
 ```
 
-In inventory mode, store clusters and manage VMs through the `VirtualMachine` model. Creating a record creates the VM on Proxmox; deleting it stops and destroys the VM:
+In inventory mode, provision through the node's cluster client, save the inventory separately, and wrap the record to manage the live VM:
 
 ```php
 use Proxmox\Models\Cluster;
+use Proxmox\Resources\VirtualMachines\VirtualMachine;
 
 $cluster = Cluster::query()->where('name', 'eu-1')->firstOrFail();
 $node = $cluster->nodes()->firstOrCreate(['name' => 'pve1']);
 
-$vm = $user->virtualMachines()->create([
-    'node' => $node, // Or 'cluster' => 'eu-1', 'node' => 'pve1'.
+$client = $node->cluster->client();
+$vmid = $client->nextVirtualMachineId();
+$client->node($node->name)->virtualMachines()->create([
+    'vmid' => $vmid,
     'name' => 'web',
     'cores' => 2,
     'memory' => 2048,
-]);
-$vm->creationTask()?->wait();
+])->wait();
 
+$record = $user->virtualMachines()->create([
+    'cluster_id' => $node->cluster_id,
+    'node_id' => $node->id,
+    'vmid' => $vmid,
+    'name' => 'web',
+]);
+
+$vm = VirtualMachine::make($record); // No request; requires a saved, non-deleted record.
 $vm->start()->wait();
 $vm->setMemory(4096);
-$vm->delete();
+$vm->stop()->wait();
+$vm->delete()->wait(); // Remote destruction only.
+$record->delete();    // Database only.
 ```
 
-Non-column keys are sent to Proxmox only. Do not pass `vmid` or call `Proxmox::nextVirtualMachineId()` here: the model uses the next free ID of the node's cluster, and the facade uses the default connection, which is not a cluster in inventory mode. Use `VirtualMachine::withoutProxmox(fn () => ...)` to record existing VMs without calling Proxmox.
+Keep API configuration out of Eloquent attributes. Use the node's cluster client rather than the default facade connection for provisioning. Record existing VMs with normal Eloquent `create()` and explicit `cluster_id`, `node_id`, and `vmid`. Model lifecycle hooks, management methods, `resource()`, `api()`, `creationTask()`, and `withoutProxmox()` are removed. Remote operations never update inventory; handle collisions, task failures, and database failures explicitly.
 
 In application tests, fake the Laravel HTTP client:
 

@@ -11,6 +11,7 @@ use InvalidArgumentException;
 use JsonSerializable;
 use Proxmox\Exceptions\InvalidConfigurationException;
 use Proxmox\Exceptions\UnexpectedResponseException;
+use Proxmox\Models\VirtualMachine as VirtualMachineModel;
 use Proxmox\Proxmox;
 use Proxmox\Resources\Tasks\Task;
 use Proxmox\Support\Identifier;
@@ -39,6 +40,28 @@ class VirtualMachine implements Arrayable, JsonSerializable
     {
         $this->node = Identifier::node($node);
         $this->vmid = Identifier::vmid($vmid);
+    }
+
+    /**
+     * Select an inventory VM without fetching runtime data or changing its record.
+     *
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     */
+    public static function make(VirtualMachineModel $record): self
+    {
+        if (! $record->exists || $record->trashed()) {
+            throw new InvalidArgumentException('Pass a saved, non-deleted virtual machine inventory record.');
+        }
+
+        $node = $record->node
+            ?? throw new InvalidConfigurationException("Virtual machine [{$record->vmid}] has no node in the inventory.");
+
+        if ($node->cluster_id !== $record->cluster_id) {
+            throw new InvalidConfigurationException("Node [{$node->name}] does not belong to cluster [{$record->cluster_id}].");
+        }
+
+        return new self($node->cluster->client(), $node->name, $record->vmid);
     }
 
     /**

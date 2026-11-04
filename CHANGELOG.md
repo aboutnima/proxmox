@@ -10,7 +10,7 @@
 - `php artisan proxmox:create-cluster` to add clusters interactively or move `.env` connections with `--from-env`.
 - `php artisan proxmox:sync-nodes` and `Cluster::syncNodes()` to add and update inventory nodes from Proxmox. Prompts for clusters, or accepts names or `--all` for scheduling. Nodes no longer listed are kept with the `missing` status.
 - `Proxmox\Concerns\HasVirtualMachines` trait for models that own inventory VMs through a polymorphic `owner` relation.
-- Inventory `VirtualMachine` records drive Proxmox: `create()` creates the VM on the given `node` with the cluster's next free VMID (passing `vmid` throws; a taken ID is retried up to 3 times), `delete()` stops and destroys it, and `start()`, `shutdown()`, `restart()`, `pause()`, `hibernate()`, `resume()`, `stop()`, `reset()`, `setCpu()`, `setCores()`, `setMemory()`, and `growDisk()` run on the live VM. `VirtualMachine::withoutProxmox()` changes records only.
+- `Proxmox\Resources\VirtualMachines\VirtualMachine::make($record)` selects a saved inventory VM's cluster, node, and VMID without fetching or mutating the record.
 - `delete($purge = true)` on the VM resource destroys a VM and its unreferenced disks.
 - In inventory mode, `Proxmox::connection($name)` resolves database clusters, and cached clients are rebuilt when a cluster changes.
 - `Proxmox::connectUsing($name, $config)` for runtime connections.
@@ -28,6 +28,7 @@
 
 ### Changed
 
+- **Breaking:** inventory `VirtualMachine` Eloquent operations now change database records only. Removed automatic provisioning/destruction, model management methods, `resource()`, `api()`, `creationTask()`, and `withoutProxmox()`. Use the VM resource's `make($record)` for live operations and provision/delete inventory explicitly. VMID collisions and missing remote VMs are no longer retried or silently accepted.
 - **Breaking:** removed `ClusterVirtualMachines` and `Proxmox::virtualMachines()`. List VMs with `Proxmox::node($node)->virtualMachines()->all()`.
 - **Breaking:** resource classes use the domain namespaces `Proxmox\Resources\Nodes`, `Proxmox\Resources\VirtualMachines`, and `Proxmox\Resources\Tasks`. Update direct class imports.
 - **Breaking:** removed `ResourceQuery` and the `Nodes` / `Images` listing classes. `VirtualMachines` now provides only node-scoped `all()` and `create()` operations. `nodes()`, `virtualMachines()->all()`, `node()->images($storage)`, and `task()->log()` return arrays. Use `collect($data)` for local filtering and aggregation.

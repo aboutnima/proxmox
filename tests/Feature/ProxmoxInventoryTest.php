@@ -134,7 +134,7 @@ it('relates clusters, nodes, virtual machines, and owners', function () {
     $user = User::query()->create(['name' => 'Nima', 'email' => 'nima@example.test', 'password' => 'secret']);
 
     $vm = new VirtualMachine(['cluster_id' => $cluster->id, 'node_id' => $node->id, 'vmid' => 101, 'name' => 'web']);
-    VirtualMachine::withoutProxmox(fn () => $vm->owner()->associate($user)->save());
+    $vm->owner()->associate($user)->save();
 
     expect($user->virtualMachines()->sole()->is($vm))->toBeTrue()
         ->and($vm->owner->is($user))->toBeTrue()
@@ -149,12 +149,9 @@ it('relates clusters, nodes, virtual machines, and owners', function () {
 it('keeps one inventory row per VM lifecycle when a VMID is reused', function () {
     $cluster = createCluster();
 
-    [$first, $second] = VirtualMachine::withoutProxmox(function () use ($cluster) {
-        $first = $cluster->virtualMachines()->create(['vmid' => 105]);
-        $first->delete();
-
-        return [$first, $cluster->virtualMachines()->create(['vmid' => 105])];
-    });
+    $first = $cluster->virtualMachines()->create(['vmid' => 105]);
+    $first->delete();
+    $second = $cluster->virtualMachines()->create(['vmid' => 105]);
 
     expect($second->id)->not->toBe($first->id)
         ->and(VirtualMachine::query()->count())->toBe(1)
@@ -164,16 +161,16 @@ it('keeps one inventory row per VM lifecycle when a VMID is reused', function ()
 it('fetches the Proxmox resource for an inventory virtual machine', function () {
     $cluster = createCluster();
     $node = $cluster->nodes()->create(['name' => 'pve1']);
-    $vm = VirtualMachine::withoutProxmox(fn () => $cluster->virtualMachines()->create(['node_id' => $node->id, 'vmid' => 101]));
+    $vm = $cluster->virtualMachines()->create(['node_id' => $node->id, 'vmid' => 101]);
 
     Http::fake(['*/nodes/pve1/qemu/101/status/current' => Http::response(['data' => ['status' => 'running', 'vmid' => 101]])]);
 
-    expect($vm->resource())->toBeInstanceOf(VirtualMachineResource::class)
-        ->and($vm->resource()->toArray()['status'])->toBe('running');
+    expect(VirtualMachineResource::make($vm)->refresh())->toBeInstanceOf(VirtualMachineResource::class)
+        ->and(VirtualMachineResource::make($vm)->refresh()->toArray()['status'])->toBe('running');
 
     $vm->update(['node_id' => null]);
 
-    expect(fn () => $vm->refresh()->resource())
+    expect(fn () => VirtualMachineResource::make($vm->refresh()))
         ->toThrow(InvalidConfigurationException::class, 'has no node in the inventory');
 });
 

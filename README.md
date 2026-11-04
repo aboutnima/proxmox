@@ -177,12 +177,32 @@ Each `proxmox_virtual_machines` row is one VM lifecycle. Proxmox reuses VMIDs af
 
 ### Managing Virtual Machines
 
-The `VirtualMachine` model is kept in sync with Proxmox. Creating a record creates the VM on its node, and deleting a record destroys the VM:
+The Eloquent `Proxmox\Models\VirtualMachine` model stores inventory only. Creating, updating, deleting, restoring, or force deleting a record never calls Proxmox. Wrap a saved, non-deleted record in the existing VM resource to manage the live VM:
 
 ```php
-$vm = $user->virtualMachines()->create([
-    'node' => $node,                 // A Node model, or a node name with 'cluster' => $cluster or 'eu-1'.
-    'name' => 'web-100',             // The VMID is the cluster's next free ID; do not pass 'vmid'.
+use Proxmox\Resources\VirtualMachines\VirtualMachine;
+
+$record = $user->virtualMachines()->firstOrFail();
+$vm = VirtualMachine::make($record); // Selects the record's cluster, node, and VMID; no HTTP request.
+
+$vm->start()->wait();
+$vm->shutdown(timeout: 60);          // Also restart(), pause(), hibernate(), resume(), stop(), reset().
+$vm->setCpu(cores: 2, sockets: 1);
+$vm->setCores(4);                    // Cores per socket only; keeps the socket count.
+$vm->setMemory(4096);
+$vm->growDisk('scsi0', 10);
+$vm->refresh()->toArray();           // Fetch live status; the inventory record is unchanged.
+```
+
+Provision explicitly through the node's API, then save the inventory record:
+
+```php
+$client = $node->cluster->client();
+$vmid = $client->nextVirtualMachineId();
+
+$task = $client->node($node->name)->virtualMachines()->create([
+    'vmid' => $vmid,
+    'name' => 'web-'.$vmid,
     'cores' => 1,
     'memory' => 2 * 1024,
     'storage' => 'local-lvm',
@@ -194,28 +214,37 @@ $vm = $user->virtualMachines()->create([
     'image' => 'local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2',
     'user' => 'root',
     'password' => $password,
-    'import_timeout' => 300,         // Optional seconds allowed for the image import.
+], importTimeout: 300);
+
+$task->wait(); // Wait for creation (the disk resize when importing an image) before recording it.
+
+$record = $user->virtualMachines()->create([
+    'cluster_id' => $node->cluster_id,
+    'node_id' => $node->id,
+    'vmid' => $vmid,
+    'name' => 'web-'.$vmid,
 ]);
 
-$vm->creationTask()?->wait();        // Wait for Proxmox to finish (the disk resize when importing an image).
-
-$vm->start();
-$vm->shutdown(timeout: 60);          // Also restart(), pause(), hibernate(), resume(), stop(), reset().
-$vm->setCpu(cores: 2, sockets: 1);
-$vm->setCores(4);                    // Cores per socket only; keeps the socket count.
-$vm->setMemory(4096);
-$vm->growDisk('scsi0', 10);
-$vm->resource()->toArray();          // Fetch live status.
-
-$vm->delete();                       // Stop the VM if needed, destroy it with its disks, then soft delete the row.
+$vm = VirtualMachine::make($record);
+$vm->start()->wait();
 ```
 
-- Every key that is not a column, such as `cores`, `image`, or `password`, is sent to Proxmox with the [create configuration](#create-a-qemu-virtual-machine) and is not stored. `name` is both sent and stored. The VMID is always the next free ID of the node's cluster and is stored in `vmid`; passing `vmid` throws an exception.
-- If Proxmox rejects the VM, no row is inserted. If destroying the VM fails, the row is kept. A VM that no longer exists on Proxmox counts as destroyed.
-- Operations return a `Task`; call `wait()` to block until it finishes. Call them on a model, such as `$user->virtualMachines()->findOrFail($id)->stop()`, not on the relation.
-- `update()` changes the record only. `forceDelete()` on a trashed VM does not call Proxmox.
-- To record VMs that already exist, or to remove records without destroying VMs, wrap the calls in `VirtualMachine::withoutProxmox(fn () => ...)`.
-- If another request takes the same VMID first, a new ID is requested, up to 3 attempts.
+To destroy a live VM, stop it if necessary, wait for destruction, and delete the record separately:
+
+```php
+if (($vm->status()['status'] ?? null) !== 'stopped') {
+    $vm->stop()->wait();
+}
+$vm->delete()->wait(); // Destroys the VM and disks; does not change the database.
+$record->delete();    // Soft deletes the row; does not call Proxmox.
+```
+
+- Use the node's cluster client for provisioning; the facade's default connection may refer to a different cluster.
+- API configuration such as `cores`, `image`, and `password` belongs in the [create configuration](#create-a-qemu-virtual-machine), not Eloquent attributes. Store only inventory columns.
+- `make()` validates the record's node and cluster and does not fetch runtime data. Operations return a `Task`; call `wait()` when completion matters.
+- Database and Proxmox operations are independent, not an atomic transaction. Handle VMID collisions, remote task failures, and database failures in your application; there is no automatic retry, cleanup, or reconciliation. A missing remote VM still raises an HTTP exception.
+- To record an existing VM, use normal Eloquent `create()` with `cluster_id`, `node_id`, and `vmid`. No bypass helper is needed.
+- **Migration:** replace model management methods with `VirtualMachine::make($record)` calls and model `resource()` with `VirtualMachine::make($record)->refresh()`. Replace automatic provisioning/deletion with the explicit workflows above; `creationTask()`, `api()`, and `withoutProxmox()` have been removed.
 
 ### Custom Models
 

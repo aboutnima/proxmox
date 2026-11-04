@@ -7,7 +7,6 @@ use Illuminate\Support\Facades\Http;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Models\Cluster;
 use Proxmox\Models\Node;
-use Proxmox\Models\VirtualMachine;
 
 beforeEach(function () {
     $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
@@ -45,10 +44,10 @@ describe('Cluster::syncNodes()', function () {
             ['name' => 'pve2', 'status' => 'online'],
             ['name' => 'old', 'status' => 'online'],
         ]);
-        $vm = VirtualMachine::withoutProxmox(fn () => $cluster->virtualMachines()->create([
+        $vm = $cluster->virtualMachines()->create([
             'node_id' => $cluster->nodes()->where('name', 'old')->value('id'),
             'vmid' => 101,
-        ]));
+        ]);
 
         fakeNodes(['eu' => [
             ['node' => 'pve1', 'status' => 'online'],
