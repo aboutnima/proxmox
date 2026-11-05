@@ -8,9 +8,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
+use InvalidArgumentException;
 use Proxmox\Exceptions\InvalidConfigurationException;
 use Proxmox\Inventory;
-use Proxmox\Resources\Nodes\Node as NodeResource;
+use Proxmox\Resources\Nodes\NodeResource;
 
 /**
  * A node of a Proxmox cluster, identified by its name within the cluster.
@@ -71,10 +72,22 @@ class Node extends Model
     /**
      * Select this node on its cluster's API client without sending a request.
      *
+     * @throws InvalidArgumentException
      * @throws InvalidConfigurationException
      */
     public function resource(): NodeResource
     {
-        return $this->cluster->client()->node($this->name);
+        return NodeResource::make($this);
+    }
+
+    /**
+     * Select this node on its cluster's API client without sending a request.
+     *
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     */
+    public function client(): NodeResource
+    {
+        return $this->resource();
     }
 }

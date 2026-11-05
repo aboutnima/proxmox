@@ -8,7 +8,8 @@ use Illuminate\Support\Facades\Http;
 use Proxmox\Exceptions\InvalidConfigurationException;
 use Proxmox\Models\Cluster;
 use Proxmox\Models\VirtualMachine;
-use Proxmox\Resources\VirtualMachines\VirtualMachine as VirtualMachineResource;
+use Proxmox\Resources\VirtualMachines\VirtualMachine as LegacyVirtualMachineResource;
+use Proxmox\Resources\VirtualMachines\VirtualMachineResource;
 use Workbench\App\Models\User;
 
 const INVENTORY_API_URL = 'https://eu.example.test:8006/api2/json';
@@ -54,7 +55,7 @@ it('creates, updates, deletes, restores, and force deletes records without calli
 });
 
 it('does not expose API management methods on the Eloquent model', function () {
-    foreach (['start', 'stop', 'shutdown', 'restart', 'pause', 'hibernate', 'resume', 'reset', 'setCpu', 'setCores', 'setMemory', 'growDisk', 'api', 'resource', 'creationTask', 'withoutProxmox'] as $method) {
+    foreach (['start', 'stop', 'shutdown', 'restart', 'pause', 'hibernate', 'resume', 'reset', 'setCpu', 'setCores', 'setMemory', 'growDisk', 'api', 'creationTask', 'withoutProxmox'] as $method) {
         expect(method_exists(VirtualMachine::class, $method))->toBeFalse();
     }
 });
@@ -64,13 +65,31 @@ it('wraps an inventory record without fetching or mutating it', function () {
     $attributes = $record->getAttributes();
 
     $vm = VirtualMachineResource::make($record);
+    $client = $record->client();
+    $resource = $record->resource();
 
     expect($vm)->toBeInstanceOf(VirtualMachineResource::class)
         ->and($vm->node)->toBe('pve1')
         ->and($vm->vmid)->toBe(101)
+        ->and($client)->toBeInstanceOf(VirtualMachineResource::class)
+        ->and($client->node)->toBe('pve1')
+        ->and($client->vmid)->toBe(101)
+        ->and($resource)->toBeInstanceOf(VirtualMachineResource::class)
+        ->and($resource->node)->toBe('pve1')
+        ->and($resource->vmid)->toBe(101)
         ->and($vm->toArray())->toBe([])
         ->and($record->getAttributes())->toBe($attributes)
         ->and($record->isDirty())->toBeFalse();
+
+    Http::assertNothingSent();
+});
+
+it('keeps the previous VM resource factory compatible', function () {
+    $record = $this->user->virtualMachines()->create($this->attributes);
+    $resource = LegacyVirtualMachineResource::make($record);
+
+    expect($resource)->toBeInstanceOf(LegacyVirtualMachineResource::class)
+        ->and($resource->vmid)->toBe(101);
 
     Http::assertNothingSent();
 });

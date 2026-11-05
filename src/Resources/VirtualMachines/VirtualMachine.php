@@ -22,6 +22,8 @@ use Proxmox\Support\ResponseData;
  * A VM's fetched runtime data and node-scoped management operations.
  *
  * @implements Arrayable<array-key, mixed>
+ *
+ * @phpstan-consistent-constructor
  */
 class VirtualMachine implements Arrayable, JsonSerializable
 {
@@ -49,7 +51,7 @@ class VirtualMachine implements Arrayable, JsonSerializable
      * @throws InvalidArgumentException
      * @throws InvalidConfigurationException
      */
-    public static function make(VirtualMachineModel $record): self
+    public static function make(VirtualMachineModel $record): static
     {
         if (! $record->exists || $record->trashed()) {
             throw new InvalidArgumentException('Pass a saved, non-deleted virtual machine inventory record.');
@@ -62,7 +64,7 @@ class VirtualMachine implements Arrayable, JsonSerializable
             throw new InvalidConfigurationException("Node [{$node->name}] does not belong to cluster [{$record->cluster_id}].");
         }
 
-        return new self($node->cluster->client(), $node->name, $record->vmid);
+        return new static($node->cluster->client(), $node->name, $record->vmid);
     }
 
     /**

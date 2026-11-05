@@ -137,6 +137,16 @@ class Cluster extends Model
     }
 
     /**
+     * The API client for this cluster.
+     *
+     * @throws InvalidConfigurationException
+     */
+    public function resource(): Proxmox
+    {
+        return $this->client();
+    }
+
+    /**
      * Fetch this cluster's nodes from Proxmox and update the proxmox_nodes rows.
      *
      * New nodes are added and existing nodes get their current status. Nodes

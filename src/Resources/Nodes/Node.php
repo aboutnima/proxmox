@@ -11,7 +11,7 @@ use Proxmox\Exceptions\InvalidConfigurationException;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Proxmox;
 use Proxmox\Resources\Tasks\Task;
-use Proxmox\Resources\VirtualMachines\VirtualMachine;
+use Proxmox\Resources\VirtualMachines\VirtualMachineResource;
 use Proxmox\Resources\VirtualMachines\VirtualMachines;
 use Proxmox\Support\Identifier;
 use Proxmox\Support\ResourceData;
@@ -150,9 +150,9 @@ readonly class Node
      * @throws RequestException
      * @throws UnexpectedResponseException
      */
-    public function virtualMachine(int|string $vmid): VirtualMachine
+    public function virtualMachine(int|string $vmid): VirtualMachineResource
     {
-        return (new VirtualMachine($this->client, $this->name, $vmid))->refresh();
+        return (new VirtualMachineResource($this->client, $this->name, $vmid))->refresh();
     }
 
     /**

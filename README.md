@@ -1,76 +1,165 @@
-<div align="center">
-    <h1>Proxmox</h1>
-</div>
+# Proxmox
 
-<p align="center">
-    <a href="https://packagist.org/packages/aboutnima/proxmox"><img src="https://img.shields.io/packagist/v/aboutnima/proxmox.svg?style=flat-square" alt="Packagist"></a>
-    <a href="https://packagist.org/packages/aboutnima/proxmox"><img src="https://img.shields.io/packagist/php-v/aboutnima/proxmox.svg?style=flat-square" alt="PHP from Packagist"></a>
-    <a href="https://packagist.org/packages/aboutnima/proxmox"><img src="https://badge.laravel.cloud/badge/aboutnima/proxmox?style=flat" alt="Laravel versions"></a>
-    <a href="https://github.com/aboutnima/proxmox/actions"><img alt="GitHub Workflow Status (main)" src="https://img.shields.io/github/actions/workflow/status/aboutnima/proxmox/tests.yml?branch=main&label=Tests&style=flat-square"></a>
-    <a href="https://packagist.org/packages/aboutnima/proxmox"><img src="https://img.shields.io/packagist/dt/aboutnima/proxmox.svg?style=flat-square" alt="Total Downloads"></a>
-</p>
+[![Latest version](https://img.shields.io/packagist/v/aboutnima/proxmox.svg?style=flat-square)](https://packagist.org/packages/aboutnima/proxmox)
+[![PHP version](https://img.shields.io/packagist/php-v/aboutnima/proxmox.svg?style=flat-square)](https://packagist.org/packages/aboutnima/proxmox)
+[![Tests](https://img.shields.io/github/actions/workflow/status/aboutnima/proxmox/tests.yml?branch=main&label=Tests&style=flat-square)](https://github.com/aboutnima/proxmox/actions/workflows/tests.yml)
+[![License](https://img.shields.io/github/license/aboutnima/proxmox?style=flat-square)](LICENSE.md)
 
-A Laravel package for integrating with the Proxmox REST API.
+A Laravel package for the Proxmox VE REST API. Manage QEMU virtual machines through a fluent, node-scoped API, monitor resources, and track background tasks using Laravel's HTTP client.
 
-## Installation
+Use it with connections in your application's configuration, or enable inventory mode to store clusters, nodes, virtual machines, and VM ownership in your database.
 
-You can install the package via Composer:
+- API token authentication, named connections, custom certificate authorities, and configurable timeouts.
+- VM creation from native QEMU parameters or readable fields, including QCOW2 cloud images and Cloud-Init.
+- Power operations, CPU and memory changes, disk growth, and VM destruction.
+- Runtime snapshots, guest information, resource summaries, and usage history.
+- Optional Eloquent inventory with encrypted credentials, node synchronization, and polymorphic owners.
+
+## Contents
+
+- [Requirements](#requirements)
+- [Installation and quick start](#installation-and-quick-start)
+- [Configuration](#configuration)
+- [Multiple connections](#multiple-connections)
+- [Reading nodes and virtual machines](#reading-nodes-and-virtual-machines)
+- [Resources and usage history](#resources-and-usage-history)
+- [Managing virtual machines](#managing-virtual-machines)
+- [Creating virtual machines](#creating-virtual-machines)
+- [Background tasks](#background-tasks)
+- [Inventory mode](#inventory-mode)
+- [Raw HTTP requests](#raw-http-requests)
+- [Error handling](#error-handling)
+- [Testing](#testing)
+- [Upgrading](#upgrading)
+- [Contributing](#contributing)
+
+## Requirements
+
+| Requirement | Supported configuration |
+| --- | --- |
+| PHP | `^8.3` |
+| Laravel | `^12.0` or `^13.0`, with a compatible PHP version |
+| Proxmox | A reachable Proxmox VE JSON API and an API token permitted to perform your operations |
+| Database | Required only for inventory mode |
+
+The resource API manages QEMU VMs. For other Proxmox endpoints, use the [raw HTTP client](#raw-http-requests).
+
+## Installation and quick start
+
+Install the package in your Laravel application:
 
 ```bash
 composer require aboutnima/proxmox
+php artisan proxmox:install --mode=api
 ```
 
-Then choose a mode:
+Laravel discovers the service provider and facade automatically. The installer publishes `config/proxmox.php` and sets `PROXMOX_MODE` in your application's `.env` file.
 
-```bash
-php artisan proxmox:install
-```
-
-| Mode | Use it when | What it sets up |
-|---|---|---|
-| `api` (default) | You call the Proxmox API and keep connections in `.env`. | Publishes `config/proxmox.php` and sets `PROXMOX_MODE=api`. No database. |
-| `inventory` | You manage several clusters at runtime and track nodes and VMs in your database. | Also publishes the inventory migrations and sets `PROXMOX_MODE=inventory`. |
-
-Pass `--mode=api` or `--mode=inventory` to skip the prompt, and `--migrate` to run the migrations immediately. Running the installer again keeps your config file and never duplicates published migrations. If your configuration is cached, run `php artisan config:cache` afterwards.
-
-You can still publish resources manually with `php artisan vendor:publish --tag="proxmox-config"` or `--tag="proxmox-migrations"`.
-
-## Configuration
-
-In api mode, configure an API token in your application's `.env` file. `PROXMOX_URL` should include the `/api2/json` path:
+Add your connection settings to `.env`. Include `/api2/json` in the URL:
 
 ```dotenv
+PROXMOX_MODE=api
+PROXMOX_CONNECTION=default
 PROXMOX_URL=https://proxmox.example.com:8006/api2/json
-PROXMOX_API_TOKEN_ID=laravel@pam!app
+PROXMOX_API_TOKEN_ID="laravel@pve!app"
 PROXMOX_API_TOKEN_SECRET=your-token-secret
 ```
 
-| Variable | Default | Description |
-|---|---|---|
-| `PROXMOX_MODE` | `api` | `api` or `inventory`. Set by `php artisan proxmox:install`. |
-| `PROXMOX_CONNECTION` | `default` | Connection used by the facade and by resolving `Proxmox\Proxmox`. In inventory mode, the name of a database cluster. |
-| `PROXMOX_TIMEOUT` | `30` | Seconds allowed for each HTTP request. |
-| `PROXMOX_CONNECT_TIMEOUT` | `10` | Seconds allowed to open the connection. |
-| `PROXMOX_VERIFY_SSL` | `true` | TLS certificate verification. Prefer a trusted certificate over disabling it. |
-| `PROXMOX_CA_BUNDLE` | | Path to a CA certificate file, or a PEM certificate, used to verify self-signed Proxmox certificates such as `/etc/pve/pve-root-ca.pem`. Ignored when verification is disabled. |
-| `PROXMOX_RETRY_TIMES` | `0` | Extra attempts for **GET** requests after a connection failure. Writes and HTTP error responses are never retried. |
-| `PROXMOX_RETRY_SLEEP` | `100` | Milliseconds between GET retries. |
-
-Configuration is validated lazily, so an incomplete configuration throws `Proxmox\Exceptions\InvalidConfigurationException` on the first request rather than when the application boots.
-
-### Multiple Connections
-
-Add more entries under `connections` in the published `config/proxmox.php`, then select them by name. Each connection is resolved once and reused:
+List your nodes and inspect a VM, replacing the node name and VMID with your own:
 
 ```php
 use Proxmox\Facades\Proxmox;
 
-$nodes = Proxmox::connection('backup')->nodes();
+$nodes = Proxmox::nodes();
+
+$node = Proxmox::node('pve1');
+$virtualMachines = $node->virtualMachines()->all();
+
+$vm = $node->virtualMachine(101);
+$status = $vm->toArray();
+$configuration = $vm->config();
 ```
 
-Calls without `connection()` use the default connection. `php artisan about` lists the mode and the configured connections without secrets.
+Run `php artisan proxmox:install` without `--mode` to choose interactively:
 
-To build a connection at runtime, for example from your own settings storage, use `connectUsing()`. The client is cached under that name:
+| Mode | Connection source | Setup |
+| --- | --- | --- |
+| `api` (default) | `config/proxmox.php`, usually populated from `.env` | Publishes configuration; no database setup |
+| `inventory` | Clusters stored in `proxmox_clusters` | Also publishes inventory migrations; see [inventory mode](#inventory-mode) |
+
+Running the installer again preserves existing configuration and skips migrations that are already published. If configuration is cached, run `php artisan config:cache` after changing the mode or environment settings.
+
+To publish configuration manually:
+
+```bash
+php artisan vendor:publish --tag=proxmox-config
+```
+
+## Configuration
+
+The default connection reads these environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PROXMOX_MODE` | `api` | Selects `api` or `inventory` mode |
+| `PROXMOX_CONNECTION` | `default` | Default connection name, or database cluster name in inventory mode |
+| `PROXMOX_URL` | Empty | API base URL, including `/api2/json` |
+| `PROXMOX_API_TOKEN_ID` | Empty | Token identifier in `user@realm!token` form |
+| `PROXMOX_API_TOKEN_SECRET` | Empty | API token secret |
+| `PROXMOX_TIMEOUT` | `30` | HTTP request timeout in seconds |
+| `PROXMOX_CONNECT_TIMEOUT` | `10` | Connection timeout in seconds |
+| `PROXMOX_VERIFY_SSL` | `true` | Whether to verify the server's TLS certificate |
+| `PROXMOX_CA_BUNDLE` | Unset | CA certificate file path or PEM certificate contents |
+| `PROXMOX_RETRY_TIMES` | `0` | Extra GET attempts after a connection failure |
+| `PROXMOX_RETRY_SLEEP` | `100` | Delay between GET attempts in milliseconds |
+
+URL, token, and timeout settings are validated when a request is made, so missing credentials do not prevent the application from booting. Request and connection timeouts must be positive integers.
+
+Retries apply only to GET requests after connection failures. HTTP error responses and write requests are never retried automatically.
+
+### TLS certificates
+
+Keep certificate verification enabled. For a private Proxmox CA, place its certificate on your application server and configure its path:
+
+```dotenv
+PROXMOX_CA_BUNDLE=/absolute/path/to/pve-root-ca.pem
+```
+
+You can also pass PEM certificate contents as a connection's `ca_bundle`. Inline PEM certificates require cURL support for `CURLOPT_CAINFO_BLOB`. The CA bundle is ignored when `verify_ssl` is `false`.
+
+Run `php artisan about` to inspect the package mode, default connection, and available connection names without displaying token secrets.
+
+## Multiple connections
+
+Add named entries under `connections` in `config/proxmox.php`. Each entry accepts the same settings as `default`; map additional environment variables explicitly:
+
+```php
+// Inside the connections array in config/proxmox.php:
+'backup' => [
+    'url' => env('PROXMOX_BACKUP_URL'),
+    'api_token_id' => env('PROXMOX_BACKUP_API_TOKEN_ID'),
+    'api_token_secret' => env('PROXMOX_BACKUP_API_TOKEN_SECRET'),
+    'timeout' => 30,
+    'connect_timeout' => 10,
+    'verify_ssl' => true,
+    'ca_bundle' => env('PROXMOX_BACKUP_CA_BUNDLE'),
+    'retry' => ['times' => 0, 'sleep' => 100],
+],
+```
+
+Select a connection by name:
+
+```php
+use Proxmox\Facades\Proxmox;
+
+$backup = Proxmox::connection('backup');
+$nodes = $backup->nodes();
+$vm = $backup->node('pve1')->virtualMachine(101);
+```
+
+Facade calls without `connection()` use `PROXMOX_CONNECTION`. Resolving or injecting `Proxmox\Proxmox` also gives you the default connection.
+
+For connection settings supplied by your application at runtime:
 
 ```php
 $client = Proxmox::connectUsing('lab', [
@@ -78,43 +167,370 @@ $client = Proxmox::connectUsing('lab', [
     'api_token_id' => 'laravel@pve!app',
     'api_token_secret' => $secret,
 ]);
+
+$nodes = $client->nodes();
 ```
 
-## Inventory Mode
+Clients are cached by name. After changing configuration in a running process, call `Proxmox::purge('backup')` to rebuild that connection on its next use. `connectUsing()` replaces the cached client for its name. `Proxmox::setDefaultConnection('backup')` changes the default for the current application instance.
 
-Inventory mode stores clusters, their nodes, and their virtual machines in your database. Clusters are read **only** from the `proxmox_clusters` table; the `connections` in `config/proxmox.php` are not used.
+## Reading nodes and virtual machines
+
+Listing methods fetch immediately and return plain arrays with the API's `data` envelope removed:
+
+```php
+use Proxmox\Facades\Proxmox;
+
+$nodes = Proxmox::nodes();
+$vms = Proxmox::node('pve1')->virtualMachines()->all();
+
+$onlineNodes = collect($nodes)->where('status', 'online')->pluck('node');
+$runningVms = collect($vms)->where('status', 'running')->values()->all();
+```
+
+Empty listings return `[]`. Collection operations filter the fetched data locally without additional requests. VM listing rows contain summary fields; fetch an individual VM for its runtime status and management methods.
+
+### VM snapshots
+
+```php
+$node = Proxmox::node('pve1');             // Selects a node without an HTTP request.
+$operations = $node->virtualMachines();   // Selects VM operations without an HTTP request.
+
+$vm = $node->virtualMachine(101);         // Fetches runtime status immediately.
+$snapshot = $vm->toArray();               // Uses the stored snapshot.
+$response = response()->json($vm);       // Serializes the same snapshot.
+
+$current = $vm->status();                 // Fetches status; leaves the snapshot unchanged.
+$vm->refresh();                          // Fetches status and replaces the snapshot.
+$configuration = $vm->config();          // Fetches VM configuration separately.
+$nodeStatus = $node->status();            // Fetches node status.
+```
+
+VM resources expose their selected `$vm->node` and `$vm->vmid`. Power and configuration operations leave the stored snapshot unchanged; call `refresh()` when you need updated data.
+
+Unwrapped API attributes have associative keys sorted alphabetically at every nesting level. List order and field values are preserved, including in VM snapshots and JSON.
+
+Node names and VMIDs are validated before requests. VMIDs must be integers or integer strings between `100` and `999999999`. Selecting a missing VM raises an HTTP exception.
+
+### Guest information and uptime
+
+```php
+$os = $vm->osInfo();
+$osName = $os['pretty-name'] ?? null;
+
+$addresses = $vm->networkInfo();
+// ['ipv4' => ['192.0.2.10'], 'ipv6' => ['2001:db8::10']]
+
+$username = $vm->username();
+$startup = $vm->startup();
+// ['uptime' => 3600, 'started_at' => 1700000000]
+```
+
+`osInfo()` and `networkInfo()` use the QEMU guest agent, which must be enabled in Proxmox and installed and running inside the guest. When the agent is unavailable, OS information is `null` and both address lists are `null`. Address lists exclude loopback and link-local addresses, include private addresses, and remove duplicates. Permission errors still throw.
+
+`username()` reads the Cloud-Init `ciuser`, falling back to `root` for known Linux OS types or `Administrator` for Windows OS types. Unknown types without a configured user return `null`. This is configuration information, not a verification of guest credentials.
+
+`startup()` fetches fresh status without changing the snapshot or requiring a guest agent. It returns uptime in seconds and an estimated startup Unix timestamp calculated from application time minus uptime. A stopped VM returns `['uptime' => 0, 'started_at' => null]`. This describes the QEMU process lifetime; keep application and Proxmox clocks synchronized when displaying the estimate.
+
+## Resources and usage history
+
+Use categorized resource methods for dashboards and capacity information:
+
+```php
+$vm = Proxmox::node('pve1')->virtualMachine(101);
+
+$usage = $vm->usage();
+$allocation = $vm->resources();
+$available = $vm->availableResources();
+
+$node = Proxmox::node('pve1');
+$capacity = $node->resources();
+$storages = $node->storages('images');
+```
+
+Each call fetches fresh data. Memory values are in MiB and disk sizes are in GiB, rounded down. Raw API status and listing fields retain their original API units.
+
+| Method | Returned information |
+| --- | --- |
+| `$vm->usage()` | `status`, `uptime`, CPU `vcpus` and `percent`, memory `total`/`used`/`free`, network `in`/`out`, and disk `read`/`write` |
+| `$vm->resources()` | Applied CPU `sockets`/`cores`/`vcpus`, memory `size`/`balloon`, and disks keyed by device with `storage` and `size` |
+| `$vm->availableResources()` | CPU `vcpus`/`used`/`available`, memory `total`/`used`/`available`, per-disk usage, and guest filesystems |
+| `$node->resources()` | CPU `cores`/`percent`/`allocated` and memory `total`/`used`/`free`/`allocated` across non-template QEMU VMs |
+| `$node->storages('images')` | Enabled storages that support VM disks, keyed by name, with `type`, `content`, `shared`, `active`, `total`, `used`, and `available` |
+
+CPU usage is expressed as a percentage. Network and disk I/O from `usage()` are cumulative byte counters since the VM started. `resources()` reads applied configuration and ignores pending changes; memory `balloon` is the minimum ballooning allocation, or `null` when disabled. CD-ROM and Cloud-Init drives are excluded from VM disks.
+
+`availableResources()` is limited to the VM's allocation and volumes. CPU availability is a percentage of its vCPUs. Available memory uses guest-reported free memory when provided, otherwise allocation minus host-side usage; stopped VMs report their full memory allocation as available. It provides two disk views:
+
+- `disks`: keyed by disk device, with `storage`, `total`, `used`, and `available`. These compare virtual disk size with storage volume usage and work without the guest agent. `used` and `available` are `null` when usage is unavailable, including for passthrough disks. These values do not measure free space inside the guest filesystem.
+- `filesystems`: guest-agent entries with `mountpoint`, `type`, `total`, `used`, and `available`. The value is `null` when the VM is stopped or the agent is disabled or unavailable.
+
+Node resource summaries include allocated CPU and memory for all non-template QEMU VMs, so allocation can exceed host capacity when overcommitted. Omit the content argument from `storages()` to list all enabled storages. Keep node capacity and storage summaries in administrator views.
+
+### Usage history
+
+```php
+$cpu = $vm->cpuHistory();
+$memory = $vm->memoryHistory('day');
+$network = $vm->networkHistory('week');
+$disk = $vm->diskHistory('month', 'max');
+```
+
+Each method returns an array of Proxmox RRD data points:
+
+| Method | Point fields | Units |
+| --- | --- | --- |
+| `cpuHistory()` | `time`, `vcpus`, `percent` | Unix timestamp, vCPU count, percent |
+| `memoryHistory()` | `time`, `total`, `used` | Unix timestamp, MiB |
+| `networkHistory()` | `time`, `in`, `out` | Unix timestamp, bytes per second |
+| `diskHistory()` | `time`, `read`, `write` | Unix timestamp, bytes per second |
+
+All four methods accept `timeframe` (`hour`, `day`, `week`, `month`, or `year`) and `consolidation` (`average` or `max`). Defaults are `hour` and `average`. Missing measurements are `null`; preserve them when plotting gaps in history.
+
+## Managing virtual machines
+
+All power and configuration operations return a `Proxmox\Resources\Tasks\Task`. Call `wait()` when subsequent work depends on completion:
+
+```php
+$vm = Proxmox::node('pve1')->virtualMachine(101);
+
+$vm->start()->wait();
+$vm->shutdown(timeout: 60)->wait();
+```
+
+| Method | Behavior |
+| --- | --- |
+| `start()` | Starts the VM |
+| `shutdown(?int $timeout = null)` | Requests a graceful guest shutdown |
+| `restart(?int $timeout = null)` | Requests a graceful reboot and applies pending VM configuration |
+| `pause()` | Suspends execution while retaining state in memory |
+| `hibernate()` | Saves state to disk; requires VM state storage |
+| `resume()` | Resumes a paused or hibernated VM |
+| `stop()` | Immediately powers off the VM |
+| `reset()` | Immediately resets the VM |
+
+The optional shutdown/restart timeout is a non-negative number of seconds sent to Proxmox. It is separate from the timeout passed to `Task::wait()`. Immediate power-off and reset can cause guest data loss.
+
+### CPU, memory, and disks
+
+```php
+$vm->setCpu(cores: 4, sockets: 1)->wait();
+$vm->setCores(6)->wait();          // Changes cores per socket; preserves socket count.
+$vm->setMemory(8192)->wait();      // MiB.
+$vm->growDisk('scsi0', 10)->wait(); // Adds 10 GiB to the existing disk.
+
+$vm->refresh();
+```
+
+Values must be positive integers. `setCpu()` preserves the current socket count when `sockets` is omitted. Without the relevant hotplug support, CPU and memory changes can remain pending until the VM restarts.
+
+`growDisk()` increases an existing disk by the supplied amount. It does not attach a disk, and Proxmox cannot shrink disks. Expanding guest partitions and filesystems remains the guest's responsibility.
+
+### Deleting a VM
+
+Stop a running VM before requesting destruction:
+
+```php
+if (($vm->status()['status'] ?? null) !== 'stopped') {
+    $vm->stop()->wait();
+}
+
+$vm->delete()->wait();
+```
+
+`delete(bool $purge = true)` destroys the VM and its unreferenced disks. With `purge: true`, it also requests removal from backup jobs, replication, and HA. Passing `purge: false` still destroys the VM and disks. In inventory mode, delete the database record separately after remote destruction succeeds.
+
+## Creating virtual machines
+
+Pass a configuration array to a node's `virtualMachines()->create()` method:
+
+```php
+use Proxmox\Facades\Proxmox;
+
+$client = Proxmox::connection();
+$vmid = $client->nextVirtualMachineId();
+
+$task = $client->node('pve1')->virtualMachines()->create([
+    'vmid' => $vmid,
+    'name' => 'web-'.$vmid,
+    'sockets' => 1,
+    'cores' => 2,
+    'memory' => 4096,
+    'storage' => 'local-lvm',
+    'disk' => 32,
+    'bridge' => 'vmbr0',
+]);
+
+$task->wait();
+```
+
+This creates a VM with an empty disk. Use a cloud image or native installation parameters to provide an operating system. `nextVirtualMachineId()` fetches a free cluster VMID; your application must handle collisions between concurrent provisioning requests.
+
+### Readable configuration fields
+
+Additional native QEMU parameters are passed through to Proxmox. The package translates these readable fields:
+
+| Field | Meaning and dependencies |
+| --- | --- |
+| `vmid` | Required integer or integer string, from `100` to `999999999` |
+| `name` | VM name |
+| `sockets`, `cores` | CPU sockets and cores per socket |
+| `memory` | Memory in MiB |
+| `storage` | Destination storage for readable disk and Cloud-Init fields |
+| `disk` | Positive integer disk size in GiB; requires `storage` |
+| `image` | Importable QCOW2 volume ID; requires `storage` |
+| `bridge` | Bridge name; creates a VirtIO `net0` card |
+| `ip` | IPv4 address without a prefix, or `dhcp`; requires `storage` and `bridge` or native `net0` |
+| `prefix` | Integer from `0` to `32`, required for a static `ip` |
+| `gateway` | Optional IPv4 gateway for a static `ip` |
+| `user`, `password` | Cloud-Init guest credentials; require `storage` |
+| `ssh_key` | Unencoded OpenSSH public key text; requires `storage` |
+
+`image`, `ip`, `user`, `password`, and `ssh_key` add a Cloud-Init drive at `ide2`. Use an image with Cloud-Init support for guest initialization. Separate multiple public keys with newlines; the package URL-encodes `ssh_key` for Proxmox.
+
+For DHCP, use `'ip' => 'dhcp'` and omit `prefix` and `gateway`. Readable IP fields support IPv4; use native `ipconfig0` for IPv6 or other native network settings.
+
+Do not combine readable fields with their native equivalents in the same configuration:
+
+| Readable field | Native equivalent |
+| --- | --- |
+| `disk` or `image` | `scsi0` |
+| `bridge` | `net0` |
+| `ip` | `ipconfig0` |
+| `user` | `ciuser` |
+| `password` | `cipassword` |
+| `ssh_key` | `sshkeys` |
+
+Readable Cloud-Init fields also conflict with an explicit `ide2`. Native credentials and `sshkeys` pass through unchanged; encode native SSH keys yourself. Other native options, such as additional disks, `ostype`, `onboot`, `boot`, and `scsihw`, can be supplied directly.
+
+### Creating from a QCOW2 cloud image
+
+List QCOW2 sources on Proxmox storage with the `import` content type enabled:
+
+```php
+$images = Proxmox::node('pve1')->images('local');
+$volumeIds = collect($images)->pluck('volid');
+```
+
+The source file must already exist on Proxmox storage. Use its volume ID as `image`; the package does not download or upload images.
+
+```php
+// $publicKey contains the text of an OpenSSH public key.
+$client = Proxmox::connection();
+$vmid = $client->nextVirtualMachineId();
+
+$task = $client->node('pve1')->virtualMachines()->create([
+    'vmid' => $vmid,
+    'name' => 'ubuntu-'.$vmid,
+    'cores' => 2,
+    'memory' => 4096,
+    'image' => 'local:import/ubuntu.qcow2',
+    'storage' => 'local-lvm',
+    'disk' => 32,
+    'bridge' => 'vmbr0',
+    'ip' => '192.0.2.10',
+    'prefix' => 24,
+    'gateway' => '192.0.2.1',
+    'user' => 'ubuntu',
+    'ssh_key' => $publicKey,
+], importTimeout: 300);
+
+$task->wait(timeout: 300);
+$client->node('pve1')->virtualMachine($vmid)->start()->wait();
+```
+
+The image must be an import volume such as `local:import/ubuntu.qcow2`. A download URL, Laravel-local path, ISO, or an existing VM disk is not accepted as an image source. Proxmox imports the source into a new VM disk. Defaults include `virtio-scsi-pci`, booting from `scsi0`, and a serial console; explicit native boot, controller, and console settings are preserved.
+
+Task behavior depends on the fields supplied:
+
+| Configuration | What `create()` returns |
+| --- | --- |
+| Without `image` | The VM creation task |
+| `image` without `disk` | The creation/import task; retains the image's virtual disk size |
+| Both `image` and `disk` | Waits for import, submits an absolute-size disk resize, and returns the resize task |
+
+With `image` and `disk`, `create()` blocks while waiting for import, up to `importTimeout` seconds (default `300`). Run this workflow in a queued job. Wait for the returned resize task before starting the VM; enabling `start` in this configuration is rejected. The requested disk size must be at least the image's virtual disk size.
+
+HTTP request timeouts, the import wait timeout, and a returned task's wait timeout are separate settings. Failed or timed-out provisioning does not cancel remote tasks or automatically delete a VM. Inspect Proxmox before retrying a failed operation.
+
+## Background tasks
+
+Creation, power operations, configuration changes, disk resizing, and VM deletion return task objects:
+
+```php
+$task = $vm->start();
+
+$upid = $task->upid;
+$nodeName = $task->node;
+$status = $task->status();
+$running = $task->isRunning();
+$lines = $task->log(start: 0, limit: 50);
+
+$task->wait(timeout: 300, interval: 1);
+```
+
+`status()` returns an array, `isRunning()` fetches the current task state, and `log()` returns an array of log entries with pagination. `wait()` polls until completion and returns the same task. Both timeout and interval are positive integers in seconds; defaults are `300` and `1`.
+
+Rebuild a task from a saved UPID using the connection that created it:
+
+```php
+$task = Proxmox::connection('backup')->task($upid);
+$task->wait();
+
+// Or select the node explicitly:
+$task = Proxmox::connection('backup')->node('pve1')->task($upid);
+```
+
+`task($upid)` reads the node from the full `UPID:node:...` value. Casting a task to a string returns its UPID. Save the connection name alongside the UPID when tracking work across multiple clusters.
+
+Tasks with exit status `OK` or `WARNINGS: n` count as successful. Other exit statuses raise `TaskFailedException`. A polling timeout raises `TaskTimeoutException` and leaves the remote task running.
+
+## Inventory mode
+
+Inventory mode adds database records for clusters, nodes, and VM ownership while using the same API resources for live operations.
 
 ```bash
 php artisan proxmox:install --mode=inventory --migrate
 ```
 
-The installer publishes a single `create_proxmox_tables` migration with these tables:
+The installer publishes a single `create_proxmox_tables` migration and, with `--migrate`, runs Laravel's pending migrations. Without that flag, you can run `php artisan migrate` separately. For manual publication, use `php artisan vendor:publish --tag=proxmox-migrations`; use the installer for repeatable setup that skips already-published migrations.
 
-| Table | Purpose |
-|---|---|
-| `proxmox_clusters` | Name, API URL, token ID, encrypted token secret, timeouts, TLS and retry settings, and an `is_active` flag. |
-| `proxmox_nodes` | Nodes of a cluster, unique by cluster and name. |
-| `proxmox_virtual_machines` | VMs of a cluster with their current node, VMID, and optional polymorphic owner. Soft deleted. |
+| Table | Contents |
+| --- | --- |
+| `proxmox_clusters` | Named connections, encrypted API token secrets, HTTP/TLS/retry settings, and `is_active` |
+| `proxmox_nodes` | Cluster nodes, unique by cluster and name, with their last synchronized status |
+| `proxmox_virtual_machines` | VM lifecycle records with cluster, current node, VMID, optional name/status, polymorphic owner, and soft deletes |
 
-### Adding Clusters
+In this mode, named connections resolve clusters from the database. Entries under `proxmox.connections` are not used for normal connection resolution. Set `PROXMOX_CONNECTION` to an existing cluster name if it differs from `default`.
 
-Add a cluster interactively. The API token secret is prompted for and never accepted as a command-line option:
+### Adding clusters
+
+Create a cluster interactively:
 
 ```bash
-php artisan proxmox:create-cluster eu-1
-php artisan proxmox:create-cluster eu-1 --url=https://eu.example.com:8006/api2/json --token-id=laravel@pve!app --ca-bundle=/path/to/pve-root-ca.pem
+php artisan proxmox:create-cluster default
 ```
 
-When you switch from api mode, the installer lists every `.env` connection that is no longer used. Move each one into the database:
+You can provide non-secret settings as options; the API token secret is requested through a hidden prompt:
+
+```bash
+php artisan proxmox:create-cluster eu-1 \
+    --url=https://eu.example.com:8006/api2/json \
+    --token-id='laravel@pve!app' \
+    --ca-bundle=/absolute/path/to/pve-root-ca.pem
+```
+
+Supported options include `--timeout=30`, `--connect-timeout=10`, `--inactive`, and `--insecure` to disable TLS verification. There is no token-secret command-line option. Cluster names must contain 1–100 letters, numbers, hyphens, or underscores and must be unique.
+
+Move an existing configured connection into inventory:
 
 ```bash
 php artisan proxmox:create-cluster default --from-env
-php artisan proxmox:create-cluster eu-1 --from-env --connection=default   # copy under a new name
+php artisan proxmox:create-cluster eu-1 --from-env --connection=default
 ```
 
-Then remove the token secret from `.env`. Other options: `--timeout`, `--connect-timeout`, `--insecure` (disables TLS verification), and `--inactive`.
+`--from-env` reads `config/proxmox.php`, including environment-backed values, and copies the selected connection. Its default source name is the new cluster name. Remove copied token secrets from `.env` once they are stored in inventory.
 
-Use clusters by name, exactly like api-mode connections:
+Use a stored cluster through the facade or its model:
 
 ```php
 use Proxmox\Facades\Proxmox;
@@ -125,98 +541,87 @@ $nodes = Proxmox::connection('eu-1')->nodes();
 $cluster = Cluster::query()->where('name', 'eu-1')->firstOrFail();
 $vms = $cluster->client()->node('pve1')->virtualMachines()->all();
 
-$cluster->update(['is_active' => false]); // Cached clients are rebuilt after every change.
+$activeClusters = Cluster::query()->active()->get();
+$cluster->update(['is_active' => false]);
 ```
 
-`is_active` is informational for your application, such as excluding a cluster from new provisioning; inactive clusters remain reachable.
+Saving or deleting a cluster model clears its cached connection for the next resolution. `is_active` is an application selection flag; inactive clusters remain accessible by name. Node synchronization with `--all` selects active clusters only.
 
-### Syncing Nodes
+### Stored credentials
 
-Fetch the nodes of your clusters from Proxmox and update `proxmox_nodes`:
+`api_token_secret` uses Laravel's `encrypted` cast and is hidden from model arrays and JSON. Keep `APP_KEY` available to every application instance that reads these records, and retain the necessary keys when rotating encryption keys. Losing the encryption key prevents decryption of stored secrets.
+
+`--ca-bundle` reads the certificate file and stores its PEM contents with the cluster, so other application instances do not need the original file. Inline certificate verification requires the cURL support described in [TLS certificates](#tls-certificates).
+
+### Synchronizing nodes
 
 ```bash
-php artisan proxmox:sync-nodes            # Choose clusters from a list; active clusters are preselected.
-php artisan proxmox:sync-nodes eu-1 us-1  # Update the named clusters, including inactive ones.
-php artisan proxmox:sync-nodes --all      # Update every active cluster.
+php artisan proxmox:sync-nodes
+php artisan proxmox:sync-nodes eu-1 us-1
+php artisan proxmox:sync-nodes --all
 ```
 
-New nodes are added and existing nodes get their current Proxmox status (`online`, `offline`, or `unknown`). Nodes that Proxmox no longer lists are kept, because virtual machines may still reference them, and get the `missing` status (`Proxmox\Models\Node::MISSING`); they return to their real status if they reappear. If one cluster cannot be reached, the others are still updated and the command exits with a failure code.
-
-Keep nodes current by scheduling the command in `routes/console.php`:
+Without arguments, the command prompts for clusters and preselects active ones. Named clusters are synchronized even when inactive. `--all` synchronizes every active cluster and supports non-interactive scheduling:
 
 ```php
+// routes/console.php
 use Illuminate\Support\Facades\Schedule;
 
-Schedule::command('proxmox:sync-nodes --all')->everyFiveMinutes()->withoutOverlapping();
+Schedule::command('proxmox:sync-nodes --all')
+    ->everyFiveMinutes()
+    ->withoutOverlapping();
 ```
 
-To sync from your own code, call `$cluster->syncNodes()`. It returns the node names grouped as `added`, `updated`, `unchanged`, and `missing`, and changes nothing if Proxmox returns an invalid listing.
+New nodes are added and existing nodes receive the status returned by Proxmox. Nodes absent from a listing are retained with `Proxmox\Models\Node::MISSING` (`missing`) because VM records may still refer to them. Reappearing nodes receive their current remote status.
 
-### Credentials
+Call `$cluster->syncNodes()` in application code to receive node names grouped under `added`, `updated`, `unchanged`, and `missing`. Invalid listings leave that cluster's node inventory unchanged. If a cluster fails during the command, processing continues for the others and the command exits with a failure code. This command synchronizes nodes; VM inventory is recorded explicitly.
 
-- `api_token_secret` uses Laravel's `encrypted` cast and is hidden from arrays and JSON. It is encrypted with `APP_KEY`: back up that key, and use `APP_PREVIOUS_KEYS` when rotating it, or stored secrets cannot be decrypted.
-- `ca_bundle` stores the PEM contents of the cluster CA (`--ca-bundle` reads the file), so every application server can verify the cluster without the file. Prefer it over `--insecure`.
+### VM owners
 
-### Owners
-
-Add the `HasVirtualMachines` trait to any model that owns virtual machines, such as `User` or `Team`:
+Add `HasVirtualMachines` to an owner model, such as a user or team:
 
 ```php
+namespace App\Models;
+
+use Illuminate\Foundation\Auth\User as Authenticatable;
 use Proxmox\Concerns\HasVirtualMachines;
 
 class User extends Authenticatable
 {
     use HasVirtualMachines;
 }
-
-$user->virtualMachines;      // Inventory VMs owned by the user.
-$node->resource()->status(); // Live node status.
 ```
 
-Each `proxmox_virtual_machines` row is one VM lifecycle. Proxmox reuses VMIDs after deletion, so a reused VMID gets a new row; use the row ID, not the VMID, to refer to a VM over time. The owner columns follow `Schema::morphUsingUuids()` and `morphUsingUlids()` when your application configures them before migrating.
+The trait provides `$user->virtualMachines()` and `$user->virtualMachines`. Each VM record has `owner`, `cluster`, and `node` relations. The migration's owner columns respect `Schema::morphUsingUuids()` or `Schema::morphUsingUlids()` if configured before migration.
 
-### Managing Virtual Machines
+Each VM inventory row represents one lifecycle. Since Proxmox can reuse a VMID after deletion, use the inventory row ID when identifying a VM over time.
 
-The Eloquent `Proxmox\Models\VirtualMachine` model stores inventory only. Creating, updating, deleting, restoring, or force deleting a record never calls Proxmox. Wrap a saved, non-deleted record in the existing VM resource to manage the live VM:
+### Provisioning and recording a VM
 
-```php
-use Proxmox\Resources\VirtualMachines\VirtualMachine;
-
-$record = $user->virtualMachines()->firstOrFail();
-$vm = VirtualMachine::make($record); // Selects the record's cluster, node, and VMID; no HTTP request.
-
-$vm->start()->wait();
-$vm->shutdown(timeout: 60);          // Also restart(), pause(), hibernate(), resume(), stop(), reset().
-$vm->setCpu(cores: 2, sockets: 1);
-$vm->setCores(4);                    // Cores per socket only; keeps the socket count.
-$vm->setMemory(4096);
-$vm->growDisk('scsi0', 10);
-$vm->refresh()->toArray();           // Fetch live status; the inventory record is unchanged.
-```
-
-Provision explicitly through the node's API, then save the inventory record:
+Eloquent VM operations update the database only. Provision the remote VM, wait for completion, and then create its inventory record:
 
 ```php
+use Proxmox\Models\Cluster;
+
+// $user is an owner model using HasVirtualMachines.
+$cluster = Cluster::query()->where('name', 'eu-1')->firstOrFail();
+$node = $cluster->nodes()->where('name', 'pve1')->firstOrFail();
 $client = $node->cluster->client();
 $vmid = $client->nextVirtualMachineId();
 
-$task = $client->node($node->name)->virtualMachines()->create([
+$client->node($node->name)->virtualMachines()->create([
     'vmid' => $vmid,
     'name' => 'web-'.$vmid,
-    'cores' => 1,
-    'memory' => 2 * 1024,
+    'cores' => 2,
+    'memory' => 4096,
     'storage' => 'local-lvm',
-    'disk' => 30,
+    'image' => 'local:import/ubuntu.qcow2',
+    'disk' => 32,
     'bridge' => 'vmbr0',
-    'ip' => '203.0.113.10',
-    'prefix' => 28,
-    'gateway' => '203.0.113.1',
-    'image' => 'local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2',
-    'user' => 'root',
-    'password' => $password,
-], importTimeout: 300);
-
-$task->wait(); // Wait for creation (the disk resize when importing an image) before recording it.
+    'ip' => 'dhcp',
+    'user' => 'ubuntu',
+    'ssh_key' => $publicKey,
+])->wait();
 
 $record = $user->virtualMachines()->create([
     'cluster_id' => $node->cluster_id,
@@ -225,348 +630,159 @@ $record = $user->virtualMachines()->create([
     'name' => 'web-'.$vmid,
 ]);
 
-$vm = VirtualMachine::make($record);
+$vm = $record->client();
 $vm->start()->wait();
 ```
 
-To destroy a live VM, stop it if necessary, wait for destruction, and delete the record separately:
+Use the node's cluster client for provisioning so requests target the same cluster as the inventory record. API settings such as `cores`, `memory`, `image`, and credentials belong in the creation configuration, not Eloquent attributes.
+
+To record an existing VM, create an inventory record with its `cluster_id`, `node_id`, and `vmid` through Eloquent. Creating the record never provisions a remote VM.
+
+### Managing a recorded VM
+
+`Proxmox\Models\VirtualMachine` is the database record. `Proxmox\Resources\VirtualMachines\VirtualMachineResource` is the live API resource:
+
+```php
+use Proxmox\Resources\Nodes\NodeResource;
+use Proxmox\Resources\VirtualMachines\VirtualMachineResource;
+
+$record = $user->virtualMachines()->firstOrFail();
+$vm = VirtualMachineResource::make($record);
+
+$vm->setMemory(8192)->wait();
+$status = $vm->refresh()->toArray();
+
+$nodeResource = NodeResource::make($record->node);
+$nodeStatus = $nodeResource->status();
+```
+
+Inventory clusters, nodes, and VMs also expose `client()` and `resource()` as equivalent entry points. A cluster returns its Proxmox client, a node returns its node-scoped resource, and a VM returns its VM resource. These methods and the factories select the API context without making an HTTP request. The VM factory requires a saved, non-deleted record with a node belonging to the same cluster. Call `refresh()` to populate the VM resource's initially empty snapshot. Live operations never update the inventory record.
+
+Destroy the remote VM and delete the inventory separately:
 
 ```php
 if (($vm->status()['status'] ?? null) !== 'stopped') {
     $vm->stop()->wait();
 }
-$vm->delete()->wait(); // Destroys the VM and disks; does not change the database.
-$record->delete();    // Soft deletes the row; does not call Proxmox.
+
+$vm->delete()->wait(); // Destroys the remote VM and disks.
+$record->delete();    // Soft deletes the database row.
 ```
 
-- Use the node's cluster client for provisioning; the facade's default connection may refer to a different cluster.
-- API configuration such as `cores`, `image`, and `password` belongs in the [create configuration](#create-a-qemu-virtual-machine), not Eloquent attributes. Store only inventory columns.
-- `make()` validates the record's node and cluster and does not fetch runtime data. Operations return a `Task`; call `wait()` when completion matters.
-- Database and Proxmox operations are independent, not an atomic transaction. Handle VMID collisions, remote task failures, and database failures in your application; there is no automatic retry, cleanup, or reconciliation. A missing remote VM still raises an HTTP exception.
-- To record an existing VM, use normal Eloquent `create()` with `cluster_id`, `node_id`, and `vmid`. No bypass helper is needed.
-- **Migration:** replace model management methods with `VirtualMachine::make($record)` calls and model `resource()` with `VirtualMachine::make($record)->refresh()`. Replace automatic provisioning/deletion with the explicit workflows above; `creationTask()`, `api()`, and `withoutProxmox()` have been removed.
+Creating, updating, deleting, restoring, or force deleting an inventory record never calls Proxmox. Remote operations and database writes are independent; handle VMID collisions, task failures, missing remote VMs, and database failures in your application. There is no automatic provisioning retry, cleanup, or reconciliation.
 
-### Custom Models
+### Custom inventory models
 
-Extend the package models and register them in `config/proxmox.php`. Relations and the manager use the configured classes:
+Extend a package model to add application behavior:
 
 ```php
-'models' => [
-    'cluster' => App\Models\ProxmoxCluster::class,
-    'node' => Proxmox\Models\Node::class,
-    'virtual_machine' => Proxmox\Models\VirtualMachine::class,
-],
+namespace App\Models;
+
+class ProxmoxCluster extends \Proxmox\Models\Cluster
+{
+    // Add application-specific relations or behavior.
+}
 ```
 
-Each class must extend the corresponding `Proxmox\Models` model.
+Register your classes under `models` in `config/proxmox.php`:
 
-## Usage
+```php
+// Inside the models array in config/proxmox.php:
+'cluster' => App\Models\ProxmoxCluster::class,
+'node' => Proxmox\Models\Node::class,
+'virtual_machine' => Proxmox\Models\VirtualMachine::class,
+```
 
-### Nodes and Virtual Machines
+Each class must extend its corresponding package model. The manager, relations, and ownership trait use the configured classes.
 
-Listing methods fetch immediately and return plain arrays:
+## Raw HTTP requests
+
+Use the underlying client for endpoints beyond the resource API or when you need response headers and status codes:
 
 ```php
 use Proxmox\Facades\Proxmox;
 
-$nodes = Proxmox::nodes();
+$response = Proxmox::get('cluster/resources', ['type' => 'vm']);
+$resources = $response->throw()->json('data');
 
-$node = Proxmox::node('pve1');
-$vms = $node->virtualMachines()->all();
+$version = Proxmox::request('GET', 'version')->throw()->json('data');
 ```
 
-`nodes()` lists nodes. `node($name)` selects a node context without sending a request. `virtualMachines()` returns node-scoped VM operations without making a request; `all()` fetches the listing as an array. An empty listing returns `[]`.
+`get()`, `post()`, `put()`, `delete()`, and `request()` return `Illuminate\Http\Client\Response`. Call `throw()` yourself to raise HTTP errors and unwrap `data` when needed. Endpoints must be non-empty paths relative to the configured API URL.
 
-Resource results sort associative keys alphabetically at every nesting level. VM listings, status, configuration, stored snapshots, and JSON therefore have consistent key ordering. List item order and field values are preserved.
+`get()` and `delete()` send parameters in the query string. `post()` and `put()` send form data. `request()` accepts Laravel HTTP request options; use `query` or `form_params` to select the parameter encoding explicitly.
 
-Use Laravel collections when you need to filter, sort, or aggregate the fetched data. These operations reuse the data without further API requests:
+## Error handling
+
+Resource methods unwrap responses, validate their expected shape, and raise exceptions for failures:
+
+| Exception | Meaning |
+| --- | --- |
+| `Illuminate\Http\Client\ConnectionException` | An HTTP connection failed |
+| `Illuminate\Http\Client\RequestException` | Proxmox returned an HTTP error |
+| `InvalidArgumentException` | An identifier or operation argument is invalid |
+| `Proxmox\Exceptions\InvalidConfigurationException` | A connection, mode, model class, or required setting is missing or invalid |
+| `Proxmox\Exceptions\UnexpectedResponseException` | Proxmox returned data in an unexpected shape |
+| `Proxmox\Exceptions\TaskFailedException` | A waited task finished with an error; exposes `upid` and `exitStatus` |
+| `Proxmox\Exceptions\TaskTimeoutException` | Task polling exceeded its timeout; exposes `upid` and `timeout` |
+
+All four package exception classes implement `Proxmox\Exceptions\ProxmoxException`. Laravel HTTP exceptions and PHP argument exceptions remain separate. A task timeout stops local polling and does not cancel the task on Proxmox.
+
+## Testing
+
+The package uses Laravel's HTTP client, so application tests can fake API responses without a Proxmox server. Supply dummy connection settings and prevent real requests:
 
 ```php
-$onlineNode = collect($nodes)->where('status', 'online')->first();
+use Illuminate\Support\Facades\Http;
+use Proxmox\Facades\Proxmox;
 
-$runningVm = collect($vms)
-    ->where('status', 'running')
-    ->where('maxmem', '>=', 2147483648)
-    ->first();
+it('lists virtual machines on a node', function () {
+    config()->set([
+        'proxmox.mode' => 'api',
+        'proxmox.default' => 'default',
+        'proxmox.connections.default.url' => 'https://proxmox.example.test:8006/api2/json',
+        'proxmox.connections.default.api_token_id' => 'laravel@pve!test',
+        'proxmox.connections.default.api_token_secret' => 'test-secret',
+    ]);
 
-$count = count($vms);
-$names = collect($vms)->pluck('name');
-$memory = collect($vms)->sum('maxmem');
+    Proxmox::purge('default');
+    Http::preventStrayRequests();
+    Http::fake([
+        '*/nodes/pve1/qemu' => Http::response([
+            'data' => [['vmid' => 101]],
+        ]),
+    ]);
+
+    expect(Proxmox::node('pve1')->virtualMachines()->all())
+        ->toBe([['vmid' => 101]]);
+
+    Http::assertSentCount(1);
+});
 ```
 
-### Individual Resources
+When testing task waits, fake the task status endpoint too, including `status: stopped` and `exitstatus: OK` for a successful result.
 
-Fetch node status or select a VM by its ID:
+### Package development
 
-```php
-$node = Proxmox::node('pve1');
-$nodeStatus = $node->status();
+After cloning the repository, run `composer install`. Available checks and workbench commands are:
 
-$vm = $node->virtualMachine(101); // Fetches /nodes/pve1/qemu/101/status/current.
+| Command | Purpose |
+| --- | --- |
+| `composer test` | Static analysis, formatting check, type coverage, and Pest tests |
+| `composer analyse` | PHPStan analysis |
+| `composer lint:check` | Check PHP formatting |
+| `composer lint` | Format PHP files |
+| `composer test:types` | Check type coverage at the configured 100% minimum |
+| `composer test:unit` | Run Pest tests in parallel |
+| `composer build` | Build the Testbench workbench |
+| `composer serve` | Build and serve the workbench |
 
-$data = $vm->toArray();          // Stored runtime data; no request.
-$response = response()->json($vm); // Serializes the same data; no request.
+## Upgrading
 
-$config = $vm->config();         // Fetches /nodes/pve1/qemu/101/config.
-$osInfo = $vm->osInfo();         // OS fields reported by the QEMU guest agent, or null if unavailable.
-$osName = $osInfo['pretty-name'] ?? null; // For example, 'Ubuntu 24.04 LTS'.
-$network = $vm->networkInfo();
-// ['ipv4' => ['192.0.2.10'], 'ipv6' => ['2001:db8::10']]
-$username = $vm->username(); // Cloud-Init username, or an OS-based default.
-```
+See [CHANGELOG.md](CHANGELOG.md) for release changes and breaking changes. Earlier API shapes map to the current API as follows:
 
-`virtualMachine($id)` immediately fetches runtime status and returns a `Proxmox\Resources\VirtualMachines\VirtualMachine` object containing that data and its management methods. `toArray()` and JSON serialization return only the stored data, without sending requests. Listing rows are summary arrays; fetch a VM by ID when you need its runtime data or management methods.
-
-`osInfo()` returns the guest agent's operating system fields, which may include `name`, `version`, and `pretty-name` (for example, `Ubuntu 24.04 LTS` or `Microsoft Windows Server 2012 R2`). The QEMU guest agent must be enabled in the VM options and installed and running inside the guest.
-
-`networkInfo()` returns separate `ipv4` and `ipv6` lists from the guest agent, excluding loopback and link-local addresses (such as `127.0.0.1`, `::1`, and `fe80::...`). Private network addresses are included. Both lists are `null` when the guest agent is unavailable.
-
-`username()` returns the configured Cloud-Init username (`ciuser`), or defaults to `root` for Linux OS types and `Administrator` for Windows OS types. It returns `null` for unknown OS types without a configured username. The username is only a default and does not verify guest credentials.
-
-Read uptime and the estimated startup time without a guest agent:
-
-```php
-$startup = $vm->startup();
-// ['uptime' => 3600, 'started_at' => 1700000000]
-
-$uptimeSeconds = $startup['uptime'];
-$startedAt = $startup['started_at'] === null
-    ? null
-    : \Illuminate\Support\Carbon::createFromTimestamp($startup['started_at']);
-```
-
-`startup()` fetches fresh runtime status without changing the stored snapshot. `uptime` is in seconds; `started_at` is a Unix timestamp estimated as the application's current time minus uptime. Keep the application and Proxmox clocks synchronized; request latency can affect the estimate. A stopped VM returns `['uptime' => 0, 'started_at' => null]`; no previous startup time is retained. These values describe the QEMU VM process, not guest OS boot time or a boot count, and may reset when the VM process is recreated (for example during migration).
-
-Read fresh status or update the stored snapshot explicitly:
-
-```php
-$currentStatus = $vm->status(); // Fresh array; leaves the stored data unchanged.
-$vm->refresh();                 // Fetches fresh data, updates the snapshot, returns $vm.
-```
-
-HTTP 404 responses throw when selecting a VM. Node names and VM IDs are validated before requesting their data. VM IDs must be integers (or integer strings) between 100 and 999999999.
-
-### Resources, Usage, and Capacity
-
-Read categorized resource data instead of raw status and configuration arrays. Memory is in MiB and disk sizes are in GiB, matching `setMemory()` and `growDisk()`. Sizes are rounded down. Each call sends fresh requests.
-
-```php
-$vm = Proxmox::node('pve1')->virtualMachine(101);
-
-$vm->usage();              // Live usage from status/current.
-// ['status' => 'running', 'uptime' => 3600, 'cpu' => ['vcpus' => 4, 'percent' => 12.35],
-//  'memory' => ['total' => 4096, 'used' => 1024, 'free' => 3072],
-//  'network' => ['in' => 300, 'out' => 400], 'disk' => ['read' => 1000, 'write' => 2000]] // I/O in bytes
-
-$vm->resources();          // Applied allocation from config?current=1 (pending changes are ignored).
-// ['cpu' => ['sockets' => 1, 'cores' => 4, 'vcpus' => 4],
-//  'memory' => ['size' => 4096, 'balloon' => null],
-//  'disks' => ['scsi0' => ['storage' => 'local-lvm', 'size' => 32]]]
-
-$vm->availableResources(); // Free resources inside the VM's own allocation only.
-// ['cpu' => ['vcpus' => 2, 'used' => 25.0, 'available' => 75.0], // Percent of the VM's vCPUs
-//  'memory' => ['total' => 4096, 'used' => 1024, 'available' => 3072],
-//  'disks' => ['scsi0' => ['storage' => 'local-lvm', 'total' => 32, 'used' => 6, 'available' => 26]],
-//  'filesystems' => [['mountpoint' => '/', 'type' => 'ext4', 'total' => 30, 'used' => 6, 'available' => 24]]]
-
-$node = Proxmox::node('pve1');
-
-$node->resources();         // Capacity, live usage, and allocation across non-template VMs.
-// ['cpu' => ['cores' => 16, 'percent' => 25.0, 'allocated' => 6],
-//  'memory' => ['total' => 65536, 'used' => 24576, 'free' => 40960, 'allocated' => 12288]]
-
-$node->storages('images');  // Enabled storages keyed by name; omit the content type for all.
-// ['local-lvm' => ['type' => 'lvmthin', 'content' => ['images', 'rootdir'], 'shared' => false,
-//  'active' => true, 'total' => 500, 'used' => 100, 'available' => 400]]
-```
-
-`resources()` lists `ide`, `sata`, `scsi`, and `virtio` disks, and skips CD-ROM and Cloud-Init drives. `balloon` is the minimum memory with ballooning, or `null` when ballooning is not configured or is disabled.
-
-`availableResources()` reads only the VM's own data and never reports node or storage capacity, so it is safe to show to the VM's owner. CPU is a percentage of the VM's vCPUs. Memory uses the guest-reported free memory when ballooning provides it, otherwise the allocation minus host-side usage; a stopped VM reports its full allocation as available.
-
-Two disk views are returned:
-
-- `disks` works without a guest agent, even for stopped VMs. It compares each disk's size with the space its volume occupies on storage, listing only this VM's volumes (`GET /nodes/{node}/storage/{storage}/content?vmid={vmid}`). It measures allocated blocks, so deleted files keep counting until the guest trims them; enable `discard=on` on the disk and run `fstrim` in the guest to keep it accurate. `used` and `available` are `null` when the storage does not report usage (for example thick LVM) and for passthrough disks.
-- `filesystems` is what the guest sees, from the QEMU guest agent (`agent/get-fsinfo`). It is `null` when the VM is stopped, the agent is not enabled in the VM options, or `qemu-guest-agent` is not running in the guest.
-
-Use `$vm->osInfo()` to get OS details from `agent/get-osinfo`; read `pretty-name` for a display label. This requires the QEMU guest agent to be enabled and running in the guest, and returns `null` when the agent is unavailable.
-
-Use `$node->resources()` and `$node->storages()` for host capacity planning; those are for administrators and should not be shown to tenants.
-
-### Usage Charts
-
-Proxmox keeps usage history for each VM (`GET /nodes/{node}/qemu/{vmid}/rrddata`). Each method returns a list of points ordered by time, ready for a chart library:
-
-```php
-$vm->cpuHistory();                 // [['time' => 1700000000, 'vcpus' => 2, 'percent' => 12.35], ...]
-$vm->memoryHistory('day');         // [['time' => 1700000000, 'total' => 4096, 'used' => 1024], ...] MiB
-$vm->networkHistory('week');       // [['time' => 1700000000, 'in' => 300.13, 'out' => 400.0], ...] bytes/s
-$vm->diskHistory('month', 'max');  // [['time' => 1700000000, 'read' => 10.56, 'write' => 20.0], ...] bytes/s
-```
-
-`time` is a Unix timestamp. The timeframe is `hour` (default), `day`, `week`, `month`, or `year`; longer timeframes return coarser points. The consolidation is `average` (default) or `max`, which is useful for spotting peaks. Values are `null` for points without data, such as while the VM was stopped.
-
-### Operate a QEMU Virtual Machine
-
-Power operations return a `Task`. Wait for it when the operation must finish before continuing:
-
-```php
-$vm = Proxmox::node('pve1')->virtualMachine(101);
-
-$vm->start()->wait();
-$vm->shutdown(timeout: 60)->wait(); // Graceful guest shutdown; timeout is optional and in seconds.
-$vm->restart()->wait();             // Graceful reboot; applies pending configuration changes.
-$vm->pause()->wait();                // Pause while keeping state in memory.
-$vm->hibernate()->wait();            // Save state to disk; requires VM state storage.
-$vm->resume()->wait();               // Resume a paused or hibernated VM.
-$vm->stop()->wait();                 // Immediate stop, like removing power.
-$vm->reset()->wait();                // Immediate reset, like pressing the reset button.
-$vm->delete()->wait();               // Destroy a stopped VM and its disks; purge removes it from jobs and HA.
-```
-
-`shutdown()` and `restart()` ask the guest to shut down gracefully and optionally accept a timeout in seconds. `stop()` and `reset()` are abrupt operations that can cause data loss. `hibernate()` requires VM state storage and the corresponding Proxmox permissions.
-
-### Change CPU, Memory, and Disk Size
-
-Each method sends one change and returns a `Task`:
-
-```php
-$vm = Proxmox::node('pve1')->virtualMachine(101);
-
-$vm->setCpu(cores: 4, sockets: 1)->wait(); // Cores per socket; omit sockets to keep the current count.
-$vm->setCores(4)->wait();                  // Same as setCpu(cores: 4).
-$vm->setMemory(8192)->wait();              // MiB
-$vm->growDisk('scsi0', 10)->wait();        // Add 10 GiB to scsi0.
-
-$vm->refresh(); // Update the stored snapshot after the changes are applied.
-```
-
-`setCpu()` and `setMemory()` use Proxmox's asynchronous `POST /nodes/{node}/qemu/{vmid}/config` endpoint. Unless CPU or memory hotplug is enabled, Proxmox can keep these changes pending for a running VM until it restarts.
-
-`growDisk()` increases an existing disk, such as `scsi0` or `virtio1`, by the given number of GiB. It does not attach a new disk. Proxmox cannot shrink disks, and the guest may still need to expand its partition and filesystem. All values must be positive integers.
-
-### Create a QEMU Virtual Machine
-
-Pass a configuration array to `node($name)->virtualMachines()->create()`. Its PHPDoc declares the supported readable keys and common native keys for IDE completion. `vmid` is required; request a free ID with `nextVirtualMachineId()`:
-
-```php
-$task = Proxmox::node('pve1')->virtualMachines()->create([
-    'vmid' => Proxmox::nextVirtualMachineId(),
-    'name' => 'web-server',
-    'sockets' => 1,
-    'cores' => 2,
-    'memory' => 4096,       // MiB
-    'storage' => 'local-lvm',
-    'disk' => 32,           // GiB
-    'bridge' => 'vmbr0',
-    'ip' => '192.0.2.10',
-    'prefix' => 24,
-    'gateway' => '192.0.2.1',
-    'user' => 'ubuntu',
-    'ssh_key' => $publicKey,
-    'ostype' => 'l26',
-    'onboot' => 1,
-]);
-
-$task->wait(); // Optional: block until Proxmox finishes the creation task.
-```
-
-`sockets` sets CPU sockets and `cores` sets cores per socket (total vCPUs = sockets x cores). Replace `storage`, `bridge`, and the example network addresses with your host's actual values. The package does not guess the subnet prefix or gateway.
-
-| Field | Proxmox configuration |
-|---|---|
-| `disk` + `storage` | Allocates `scsi0` on that storage, using `virtio-scsi-pci` unless you supply `scsihw`. |
-| `bridge` | Creates `net0`, a VirtIO network card connected to the named bridge. |
-| `ip` + `prefix` + optional `gateway` | Builds the IPv4 Cloud-Init configuration in `ipconfig0`. Set `ip` to `dhcp` for DHCP. |
-| `user` / `password` | Sets the guest's Cloud-Init `ciuser` / `cipassword`. |
-| `ssh_key` | Sets Cloud-Init `sshkeys` from unencoded OpenSSH public key text. Separate multiple keys with newlines; the package encodes the string. |
-| `image` + `storage` | Imports a QCOW2 source into a new `scsi0` disk on the destination storage. |
-| Any of `image`, `ip`, `user`, `password`, `ssh_key` + `storage` | Automatically attaches the Cloud-Init drive as `ide2`. |
-| `start` | Boots after creation when enabled. Cannot be enabled together with `image` and `disk`. |
-
-For a static IPv4 address, supply a plain address (without `/24`), an integer prefix between 0 and 32, and optionally a gateway. An IP requires `storage` and either `bridge` or an explicit native `net0` card.
-
-Additional native QEMU parameters remain supported, including additional disks, VLAN options, and IPv6 through `ipconfig0`. The package passes these extra keys through to Proxmox. Do not combine `disk`/`image` with `scsi0`, `bridge` with `net0`, `ip` with `ipconfig0`, or readable guest credentials with their native equivalents. Readable Cloud-Init fields also conflict with an explicit `ide2`. Invalid readable fields, invalid VM IDs, and conflicts throw `InvalidArgumentException` before any request is sent. Native `sshkeys` must already be URL-encoded; only `ssh_key` performs that encoding.
-
-`create()` returns a `Proxmox\Resources\Tasks\Task` for the asynchronous creation. IP and guest credentials require a Cloud-Init-enabled image; attaching the drive alone does not configure an arbitrary OS or allocate a public IP. Without `image`, the disk is blank: hardware creation does not install an OS or clone a template.
-
-### Tasks
-
-Write operations in Proxmox run as background tasks identified by a UPID. Methods that start a task return a `Task`:
-
-```php
-$task->upid;          // "UPID:pve1:..."
-$task->node;          // "pve1"
-$task->status();      // GET /nodes/{node}/tasks/{upid}/status
-$task->isRunning();
-$task->log(start: 0, limit: 50); // Array of log lines.
-
-$task->wait(timeout: 300, interval: 1);
-```
-
-`wait()` polls until the task stops. It returns the task when the exit status is `OK` or `WARNINGS: n`, and throws `Proxmox\Exceptions\TaskFailedException` for any other exit status or `Proxmox\Exceptions\TaskTimeoutException` when the timeout passes. A timeout does not cancel the remote task. Rebuild a task from a stored UPID with `Proxmox::task($upid)`, which reads the node from the UPID, or with `Proxmox::node('pve1')->task($upid)`. A `Task` casts to its UPID string.
-
-### List and Create from QCOW2 Cloud Images
-
-The source image must already exist **on Proxmox storage accessible from the selected node**, not on the Laravel server. Use a Proxmox version and file-based source storage that support the `import` content type. Enable **Import** in that storage's content settings, then place the QCOW2 in its `import/` directory. For the default `local` directory storage, that is `/var/lib/vz/import/` on the Proxmox host. `local-lvm` can hold the destination VM disk, but cannot hold import-source files.
-
-List available QCOW2 import sources and select their `volid`:
-
-```php
-$images = Proxmox::node('pve1')->images('local');
-
-$image = collect($images)
-    ->where('volid', 'local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2')
-    ->first();
-```
-
-`images($storage)` fetches immediately and returns an array of QCOW2 files from `GET /nodes/{node}/storage/{storage}/content?content=import`, not existing VM disks or ISOs. An empty listing means no matching files; HTTP/permission errors still throw. The listing cannot verify that a file contains Cloud-Init.
-
-```php
-$task = Proxmox::node('pve1')->virtualMachines()->create([
-    'vmid' => 102,
-    'name' => 'ubuntu-102',
-    'cores' => 2,
-    'memory' => 4096,
-    'image' => 'local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2',
-    'storage' => 'local-lvm',
-    'disk' => 32,
-    'bridge' => 'vmbr0',
-    'ip' => '192.0.2.10',
-    'prefix' => 24,
-    'gateway' => '192.0.2.1',
-    'user' => 'ubuntu',
-    'ssh_key' => $publicKey, // Contents of an OpenSSH .pub file.
-], importTimeout: 300);
-```
-
-The `image` field takes a volume ID such as `local:import/ubuntu.qcow2`, not a bare filename, absolute path, or download URL. Proxmox copies the source into a new per-VM disk using `import-from`; the reusable source is not attached as a shared writable disk. The package defaults to `virtio-scsi-pci`, booting from `scsi0`, and a serial console (`serial0=socket`, `vga=serial0`). Explicit native controller, boot, and console choices are preserved.
-
-Without `disk`, creation returns the import task immediately and retains the image's virtual disk size. With `image` **and** `disk`, the method waits for successful import (up to `importTimeout` seconds, 300 by default), then submits a separate absolute-size resize and returns the **resize task**. Wait for that final task before starting the VM. Proxmox cannot shrink disks: request at least the source image's virtual size, which can differ from its compressed file size. Guest partition/filesystem expansion depends on the image's Cloud-Init configuration.
-
-Run image provisioning with a requested disk size in a queued job rather than a short web request. `PROXMOX_TIMEOUT` still controls each HTTP request; `importTimeout` controls the import polling budget. An import failure or timeout throws `TaskFailedException` or `TaskTimeoutException` without submitting a resize. A VM may already exist after a later error; inspect Proxmox before retrying. No automatic deletion or retry is performed. `start` cannot be enabled with `image` and `disk`, because the VM must not boot before resizing finishes.
-
-Grant the API token access to the source storage, VM allocation, destination storage allocation, network bridge, and `VM.Config.Disk` for resizing. Passwords and keys are guest credentials, not API-token credentials; use only public keys and keep passwords out of committed code. Password-based SSH access also depends on the guest image's SSH policy.
-
-See the [Cloud-Init guide](https://pve.proxmox.com/wiki/Cloud-Init_Support), [storage content types](https://pve.proxmox.com/pve-docs/chapter-pvesm.html#_common_storage_properties), and [API Viewer](https://pve.proxmox.com/pve-docs/api-viewer/index.html) for the create, storage-content, task-status, and resize endpoints.
-
-### Errors
-
-All resource methods remove the API's `data` envelope. HTTP 4xx/5xx responses raise Laravel's `RequestException`, and connection failures raise `ConnectionException`. Package exceptions implement `Proxmox\Exceptions\ProxmoxException`:
-
-| Exception | Thrown when |
-|---|---|
-| `InvalidConfigurationException` (`LogicException`) | A connection is missing or misconfigured. |
-| `UnexpectedResponseException` (`UnexpectedValueException`) | Proxmox returns malformed data. |
-| `TaskFailedException` | A waited task stops with an error. Exposes `upid` and `exitStatus`. |
-| `TaskTimeoutException` | A waited task is still running after the timeout. Exposes `upid` and `timeout`. |
-
-### Migrating to the Direct-Fetch API
-
-`nodes()`, `images($storage)`, and task logs return arrays directly. Fetch VMs through `virtualMachines()->all()`, which also returns an array. Use `collect($data)` for local filtering; VM operations provide `all()` and `create()` without query methods or macros.
-
-| Previous call | Replacement |
-|---|---|
+| Previous API | Current API |
+| --- | --- |
 | `Proxmox::getNodes()` | `Proxmox::nodes()` |
 | `Proxmox::getNode($node)` | `Proxmox::node($node)->status()` |
 | `Proxmox::getVirtualMachines($node)` | `Proxmox::node($node)->virtualMachines()->all()` |
@@ -574,88 +790,28 @@ All resource methods remove the API's `data` envelope. HTTP 4xx/5xx responses ra
 | `Proxmox::getImages($node, $storage)` | `Proxmox::node($node)->images($storage)` |
 | `Proxmox::createVirtualMachine($node, $config)` | `Proxmox::node($node)->virtualMachines()->create($config)` |
 | `Proxmox::nodes($node)` | `Proxmox::node($node)` |
-| `node()->virtualMachine()` | `node()->virtualMachines()->all()` |
-| `node()->createVirtualMachine($config)` | `node()->virtualMachines()->create($config)` |
+| `Proxmox::virtualMachines()` | Select a node, then call `virtualMachines()->all()` |
 | `node()->makeVirtualMachine($id)->...->create()` | `node()->virtualMachines()->create(['vmid' => $id, ...])` |
+| Inventory VM management methods | `$record->client()` or `$record->resource()` followed by a resource operation |
+| `VirtualMachineResource::make($record)` | `$record->client()` or `$record->resource()` |
 
-Node and VM `get()` / `first()` aliases have been removed. Use `node()->status()` for node data, `virtualMachine($id)->toArray()` for a VM's fetched data, and `virtualMachine($id)->status()` for a fresh status request. `Task::log()` now returns an array as well.
+Listing methods return arrays; use Laravel collections for local queries. Node and VM `get()`/`first()` aliases, the VM `vm()` alias, and the pending creation builder have been removed. Creation and mutation methods return task objects rather than UPID strings.
 
-### Raw HTTP Requests
+Inventory models no longer provision or destroy VMs through lifecycle hooks. Replace `creationTask()`, `api()`, and `withoutProxmox()` workflows with explicit [inventory operations](#provisioning-and-recording-a-vm).
 
-The generic `get()`, `post()`, `put()`, `delete()`, and `request()` methods return Laravel HTTP responses for custom endpoints, or when you need headers and status codes. For these raw methods, call `throw()` explicitly to raise HTTP errors. GET and DELETE parameters are sent as query parameters, because Proxmox ignores DELETE request bodies. POST and PUT parameters are sent as form data:
-
-```php
-$response = Proxmox::get('nodes');
-
-Proxmox::delete('nodes/pve1/qemu/101', ['purge' => 1])->throw();
-```
-
-### Testing
-
-Fake the Laravel HTTP client in your application tests:
-
-```php
-use Illuminate\Support\Facades\Http;
-
-Http::fake(['*/nodes/pve1/qemu' => Http::response(['data' => [['vmid' => 101]]])]);
-
-expect(Proxmox::node('pve1')->virtualMachines()->all())->toBe([['vmid' => 101]]);
-```
-
-## Changelog
-
-Please see [CHANGELOG](CHANGELOG.md) for more information on what has changed recently.
+Connections now live under `proxmox.default` and `proxmox.connections`. Direct resource imports use `Proxmox\Resources\Nodes`, `Proxmox\Resources\VirtualMachines`, and `Proxmox\Resources\Tasks`; Eloquent inventory models remain under `Proxmox\Models`.
 
 ## Contributing
 
-Thank you for considering contributing to Proxmox! Please review our [contributing guide](.github/CONTRIBUTING.md) to get started.
+See the [contribution guide](.github/CONTRIBUTING.md) for the development workflow and run `composer test` before submitting changes.
 
-### Source Structure
-
-Related resources are grouped by domain under `Proxmox\Resources`. Shared exceptions and support code have dedicated namespaces:
-
-```text
-src/
-├── Concerns/
-│   └── HasVirtualMachines.php
-├── Console/
-│   └── Commands/
-├── Models/
-│   ├── Cluster.php
-│   ├── Node.php
-│   └── VirtualMachine.php
-├── Resources/
-│   ├── Nodes/
-│   │   └── Node.php
-│   ├── VirtualMachines/
-│   │   ├── VirtualMachine.php
-│   │   ├── VirtualMachines.php
-│   │   └── VirtualMachineConfiguration.php
-│   └── Tasks/
-│       └── Task.php
-├── Exceptions/
-├── Support/
-│   ├── Identifier.php
-│   ├── ResourceData.php
-│   └── ResponseData.php
-├── Facades/
-├── Inventory.php
-├── Proxmox.php
-├── ProxmoxManager.php
-└── ProxmoxServiceProvider.php
-```
-
-For example, direct imports use `Proxmox\Resources\VirtualMachines\VirtualMachine` and `Proxmox\Resources\Tasks\Task`. Package exceptions live under `Proxmox\Exceptions`. Inventory Eloquent models live under `Proxmox\Models`; `Proxmox\Models\VirtualMachine` is the database record and `Proxmox\Resources\VirtualMachines\VirtualMachine` is the live API object.
-
-## Security Vulnerabilities
-
-Please review [our security policy](.github/SECURITY.md) on how to report security vulnerabilities.
+Report vulnerabilities according to the [security policy](.github/SECURITY.md).
 
 ## Credits
 
 - [Nima Asaadi](https://github.com/aboutnima)
-- [All Contributors](../../contributors)
+- [Contributors](https://github.com/aboutnima/proxmox/graphs/contributors)
 
 ## License
 
-Proxmox is open-sourced software licensed under the [MIT license](LICENSE.md).
+Released under the [MIT license](LICENSE.md).

@@ -9,8 +9,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
+use InvalidArgumentException;
 use Proxmox\Exceptions\InvalidConfigurationException;
 use Proxmox\Inventory;
+use Proxmox\Resources\VirtualMachines\VirtualMachineResource;
 
 /**
  * An inventory record for one QEMU virtual machine lifecycle.
@@ -87,5 +89,27 @@ class VirtualMachine extends Model
     public function owner(): MorphTo
     {
         return $this->morphTo();
+    }
+
+    /**
+     * Select this inventory VM for live API operations without fetching runtime data.
+     *
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     */
+    public function client(): VirtualMachineResource
+    {
+        return VirtualMachineResource::make($this);
+    }
+
+    /**
+     * Select this inventory VM for live API operations without fetching runtime data.
+     *
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     */
+    public function resource(): VirtualMachineResource
+    {
+        return $this->client();
     }
 }

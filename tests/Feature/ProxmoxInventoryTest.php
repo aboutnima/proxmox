@@ -11,7 +11,8 @@ use Proxmox\Inventory;
 use Proxmox\Models\Cluster;
 use Proxmox\Models\Node;
 use Proxmox\Models\VirtualMachine;
-use Proxmox\Resources\VirtualMachines\VirtualMachine as VirtualMachineResource;
+use Proxmox\Resources\Nodes\NodeResource;
+use Proxmox\Resources\VirtualMachines\VirtualMachineResource;
 use Workbench\App\Models\User;
 
 beforeEach(function () {
@@ -143,7 +144,19 @@ it('relates clusters, nodes, virtual machines, and owners', function () {
         ->and($node->cluster->is($cluster))->toBeTrue()
         ->and($node->virtualMachines()->sole()->is($vm))->toBeTrue()
         ->and($cluster->virtualMachines()->sole()->is($vm))->toBeTrue()
+        ->and($cluster->resource())->toBe($cluster->client())
+        ->and(NodeResource::make($node))->toBeInstanceOf(NodeResource::class)
+        ->and($node->client()->name)->toBe('pve1')
         ->and($node->resource()->name)->toBe('pve1');
+});
+
+it('requires a saved inventory node to create a node resource', function () {
+    $node = new Node(['name' => 'pve1']);
+
+    expect(fn () => NodeResource::make($node))
+        ->toThrow(InvalidArgumentException::class, 'saved');
+
+    Http::assertNothingSent();
 });
 
 it('keeps one inventory row per VM lifecycle when a VMID is reused', function () {
