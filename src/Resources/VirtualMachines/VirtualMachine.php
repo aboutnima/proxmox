@@ -81,6 +81,145 @@ class VirtualMachine implements Arrayable, JsonSerializable
     }
 
     /**
+     * Fetch operating system information reported by the QEMU guest agent.
+     *
+     * @return array<array-key, mixed>|null
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function osInfo(): ?array
+    {
+        return $this->agent('get-osinfo');
+    }
+
+    /**
+     * Fetch guest IPv4 and IPv6 addresses, excluding loopback and link-local addresses.
+     *
+     * @return array{ipv4: list<string>|null, ipv6: list<string>|null}
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function networkInfo(): array
+    {
+        $interfaces = $this->agent('network-get-interfaces');
+
+        /** @var list<string>|null $ipv4 */
+        $ipv4 = null;
+        /** @var list<string>|null $ipv6 */
+        $ipv6 = null;
+
+        if ($interfaces !== null) {
+            $ipv4 = [];
+            $ipv6 = [];
+
+            foreach ($interfaces as $interface) {
+                if (! is_array($interface) || ! is_array($interface['ip-addresses'] ?? null)) {
+                    continue;
+                }
+
+                foreach ($interface['ip-addresses'] as $address) {
+                    $ipAddress = is_array($address) ? ($address['ip-address'] ?? null) : null;
+
+                    if (is_string($ipAddress)
+                        && filter_var($ipAddress, FILTER_VALIDATE_IP) !== false
+                        && ! self::isLoopbackOrLinkLocalAddress($ipAddress)) {
+                        if (filter_var($ipAddress, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
+                            $ipv4[] = $ipAddress;
+                        } elseif (filter_var($ipAddress, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
+                            $ipv6[] = $ipAddress;
+                        }
+                    }
+                }
+            }
+
+            $ipv4 = array_values(array_unique($ipv4));
+            $ipv6 = array_values(array_unique($ipv6));
+        }
+
+        return ['ipv4' => $ipv4, 'ipv6' => $ipv6];
+    }
+
+    /**
+     * Return the configured Cloud-Init username or a default for known Linux and Windows OS types.
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function username(): ?string
+    {
+        $config = $this->config();
+        $configuredUsername = $config['ciuser'] ?? null;
+        $username = is_string($configuredUsername) && trim($configuredUsername) !== ''
+            ? trim($configuredUsername)
+            : null;
+
+        if ($username === null && is_string($config['ostype'] ?? null)) {
+            $osType = strtolower($config['ostype']);
+            $username = match (true) {
+                str_starts_with($osType, 'l') => 'root',
+                str_starts_with($osType, 'w') => 'Administrator',
+                default => null,
+            };
+        }
+
+        return $username;
+    }
+
+    private static function isLoopbackOrLinkLocalAddress(string $address): bool
+    {
+        $packed = inet_pton($address);
+
+        if ($packed === false) {
+            return false;
+        }
+
+        if (strlen($packed) === 4) {
+            $firstOctet = ord($packed[0]);
+
+            return $firstOctet === 127
+                || ($firstOctet === 169 && ord($packed[1]) === 254);
+        }
+
+        return $packed === str_repeat("\0", 15)."\1"
+            || (ord($packed[0]) === 0xFE && (ord($packed[1]) & 0xC0) === 0x80);
+    }
+
+    /**
+     * Fetch VM process uptime in seconds and estimate its startup Unix timestamp.
+     *
+     * @return array{uptime: int, started_at: int|null}
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function startup(): array
+    {
+        $status = $this->status();
+
+        if (($status['status'] ?? null) === 'stopped') {
+            return ['uptime' => 0, 'started_at' => null];
+        }
+
+        $uptime = $status['uptime'] ?? null;
+
+        if (($status['status'] ?? null) !== 'running' || ! is_int($uptime) || $uptime < 0) {
+            throw UnexpectedResponseException::expectedVirtualMachineStartup();
+        }
+
+        return ['uptime' => $uptime, 'started_at' => now()->getTimestamp() - $uptime];
+    }
+
+    /**
      * Replace the stored data with the latest runtime status.
      *
      * @throws ConnectionException

@@ -33,6 +33,11 @@ class UnexpectedResponseException extends UnexpectedValueException implements Pr
         return new self('Expected a VM ID in the Proxmox API response "data" field.');
     }
 
+    public static function expectedVirtualMachineStartup(): self
+    {
+        return new self('Expected a running or stopped VM status and a non-negative integer uptime for a running VM.');
+    }
+
     public static function expectedImage(): self
     {
         return new self('Expected format and volid strings in the Proxmox image listing.');

@@ -308,9 +308,34 @@ $data = $vm->toArray();          // Stored runtime data; no request.
 $response = response()->json($vm); // Serializes the same data; no request.
 
 $config = $vm->config();         // Fetches /nodes/pve1/qemu/101/config.
+$osInfo = $vm->osInfo();         // OS fields reported by the QEMU guest agent, or null if unavailable.
+$osName = $osInfo['pretty-name'] ?? null; // For example, 'Ubuntu 24.04 LTS'.
+$network = $vm->networkInfo();
+// ['ipv4' => ['192.0.2.10'], 'ipv6' => ['2001:db8::10']]
+$username = $vm->username(); // Cloud-Init username, or an OS-based default.
 ```
 
 `virtualMachine($id)` immediately fetches runtime status and returns a `Proxmox\Resources\VirtualMachines\VirtualMachine` object containing that data and its management methods. `toArray()` and JSON serialization return only the stored data, without sending requests. Listing rows are summary arrays; fetch a VM by ID when you need its runtime data or management methods.
+
+`osInfo()` returns the guest agent's operating system fields, which may include `name`, `version`, and `pretty-name` (for example, `Ubuntu 24.04 LTS` or `Microsoft Windows Server 2012 R2`). The QEMU guest agent must be enabled in the VM options and installed and running inside the guest.
+
+`networkInfo()` returns separate `ipv4` and `ipv6` lists from the guest agent, excluding loopback and link-local addresses (such as `127.0.0.1`, `::1`, and `fe80::...`). Private network addresses are included. Both lists are `null` when the guest agent is unavailable.
+
+`username()` returns the configured Cloud-Init username (`ciuser`), or defaults to `root` for Linux OS types and `Administrator` for Windows OS types. It returns `null` for unknown OS types without a configured username. The username is only a default and does not verify guest credentials.
+
+Read uptime and the estimated startup time without a guest agent:
+
+```php
+$startup = $vm->startup();
+// ['uptime' => 3600, 'started_at' => 1700000000]
+
+$uptimeSeconds = $startup['uptime'];
+$startedAt = $startup['started_at'] === null
+    ? null
+    : \Illuminate\Support\Carbon::createFromTimestamp($startup['started_at']);
+```
+
+`startup()` fetches fresh runtime status without changing the stored snapshot. `uptime` is in seconds; `started_at` is a Unix timestamp estimated as the application's current time minus uptime. Keep the application and Proxmox clocks synchronized; request latency can affect the estimate. A stopped VM returns `['uptime' => 0, 'started_at' => null]`; no previous startup time is retained. These values describe the QEMU VM process, not guest OS boot time or a boot count, and may reset when the VM process is recreated (for example during migration).
 
 Read fresh status or update the stored snapshot explicitly:
 
@@ -363,6 +388,8 @@ Two disk views are returned:
 
 - `disks` works without a guest agent, even for stopped VMs. It compares each disk's size with the space its volume occupies on storage, listing only this VM's volumes (`GET /nodes/{node}/storage/{storage}/content?vmid={vmid}`). It measures allocated blocks, so deleted files keep counting until the guest trims them; enable `discard=on` on the disk and run `fstrim` in the guest to keep it accurate. `used` and `available` are `null` when the storage does not report usage (for example thick LVM) and for passthrough disks.
 - `filesystems` is what the guest sees, from the QEMU guest agent (`agent/get-fsinfo`). It is `null` when the VM is stopped, the agent is not enabled in the VM options, or `qemu-guest-agent` is not running in the guest.
+
+Use `$vm->osInfo()` to get OS details from `agent/get-osinfo`; read `pretty-name` for a display label. This requires the QEMU guest agent to be enabled and running in the guest, and returns `null` when the agent is unavailable.
 
 Use `$node->resources()` and `$node->storages()` for host capacity planning; those are for administrators and should not be shown to tenants.
 

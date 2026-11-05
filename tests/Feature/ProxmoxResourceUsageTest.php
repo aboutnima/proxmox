@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Facades\Proxmox;
@@ -22,6 +23,10 @@ beforeEach(function () {
     Http::preventStrayRequests();
 });
 
+afterEach(function () {
+    Carbon::setTestNow();
+});
+
 function usageVirtualMachine(): VirtualMachine
 {
     return new VirtualMachine(Proxmox::connection(), 'my', 101);
@@ -31,6 +36,65 @@ function fakeVirtualMachineConfig(array $config): void
 {
     Http::fake(['*/nodes/my/qemu/101/config*' => Http::response(['data' => $config])]);
 }
+
+it('reports VM uptime and an estimated startup timestamp without a guest agent', function (int $uptime) {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_003_600, 'Asia/Tehran'));
+    Http::fake(['*/nodes/my/qemu/101/status/current' => Http::response(['data' => [
+        'status' => 'running',
+        'uptime' => $uptime,
+    ]])]);
+
+    expect(usageVirtualMachine()->startup())->toBe([
+        'uptime' => $uptime,
+        'started_at' => 1_700_003_600 - $uptime,
+    ]);
+
+    Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
+        && str_ends_with($request->url(), '/nodes/my/qemu/101/status/current'));
+    Http::assertSentCount(1);
+})->with([0, 3600]);
+
+it('reports no startup timestamp for a stopped VM', function (array $status) {
+    Http::fake(['*/nodes/my/qemu/101/status/current' => Http::response(['data' => $status])]);
+
+    expect(usageVirtualMachine()->startup())->toBe(['uptime' => 0, 'started_at' => null]);
+})->with([
+    'no runtime counters' => [['status' => 'stopped']],
+    'stale runtime counter' => [['status' => 'stopped', 'uptime' => 3600]],
+]);
+
+it('rejects invalid VM startup data', function (array $status) {
+    Http::fake(['*/nodes/my/qemu/101/status/current' => Http::response(['data' => $status])]);
+
+    expect(fn () => usageVirtualMachine()->startup())->toThrow(UnexpectedResponseException::class);
+})->with([
+    'missing status' => [['uptime' => 3600]],
+    'invalid status' => [['status' => 'unknown', 'uptime' => 3600]],
+    'missing running uptime' => [['status' => 'running']],
+    'negative uptime' => [['status' => 'running', 'uptime' => -1]],
+    'invalid uptime' => [['status' => 'running', 'uptime' => 'invalid']],
+    'fractional uptime' => [['status' => 'running', 'uptime' => 1.5]],
+]);
+
+it('fetches startup data without changing the VM snapshot', function () {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_003_600));
+    Http::fake(['*/nodes/my/qemu/101/status/current' => Http::sequence()
+        ->push(['data' => ['status' => 'running', 'uptime' => 3600]])
+        ->push(['data' => ['status' => 'stopped']])]);
+
+    $vm = usageVirtualMachine()->refresh();
+    $snapshot = $vm->toArray();
+
+    expect($vm->startup())->toBe(['uptime' => 0, 'started_at' => null])
+        ->and($vm->toArray())->toBe($snapshot);
+    Http::assertSentCount(2);
+});
+
+it('propagates startup request errors', function () {
+    Http::fake(['*/nodes/my/qemu/101/status/current' => Http::response([], 403)]);
+
+    expect(fn () => usageVirtualMachine()->startup())->toThrow(RequestException::class);
+});
 
 it('categorizes live VM usage from the current status in MiB and bytes', function () {
     Http::fake(['*/nodes/my/qemu/101/status/current' => Http::response(['data' => [
@@ -250,6 +314,87 @@ it('falls back to host-side memory usage and skips the agent when it is not enab
     ]);
 
     Http::assertSentCount(2);
+});
+
+it('returns operating system information from the guest agent', function () {
+    Http::fake(['*/nodes/my/qemu/101/agent/get-osinfo' => Http::response(['data' => ['result' => [
+        'id' => 'ubuntu',
+        'name' => 'Ubuntu',
+        'pretty-name' => 'Ubuntu 24.04 LTS',
+        'version' => '24.04',
+    ]]])]);
+
+    expect(usageVirtualMachine()->osInfo())->toBe([
+        'id' => 'ubuntu',
+        'name' => 'Ubuntu',
+        'pretty-name' => 'Ubuntu 24.04 LTS',
+        'version' => '24.04',
+    ]);
+
+    Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
+        && $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/qemu/101/agent/get-osinfo');
+});
+
+it('returns null operating system information when the guest agent is not running', function () {
+    Http::fake(['*/nodes/my/qemu/101/agent/get-osinfo' => Http::response(['data' => null], 500)]);
+
+    expect(usageVirtualMachine()->osInfo())->toBeNull();
+});
+
+it('returns guest IPv4 and IPv6 addresses without local addresses', function () {
+    Http::fake(['*/nodes/my/qemu/101/agent/network-get-interfaces' => Http::response(['data' => ['result' => [
+        ['ip-addresses' => [
+            ['ip-address' => '127.0.0.1', 'ip-address-type' => 'ipv4'],
+            ['ip-address' => '::1', 'ip-address-type' => 'ipv6'],
+            ['ip-address' => 'fe80::be24:11ff:fea3:fd82', 'ip-address-type' => 'ipv6'],
+            ['ip-address' => '192.0.2.10', 'ip-address-type' => 'ipv4'],
+            ['ip-address' => '2001:db8::10', 'ip-address-type' => 'ipv6'],
+            ['ip-address' => '10.0.0.10', 'ip-address-type' => 'ipv4'],
+            ['ip-address' => 'fd00::10', 'ip-address-type' => 'ipv6'],
+            ['ip-address' => 'not-an-ip', 'ip-address-type' => 'ipv4'],
+        ]],
+        ['ip-addresses' => [
+            ['ip-address' => '192.0.2.10', 'ip-address-type' => 'ipv4'],
+        ]],
+        ['name' => 'lo'],
+    ]]])]);
+
+    expect(usageVirtualMachine()->networkInfo())->toBe([
+        'ipv4' => ['192.0.2.10', '10.0.0.10'],
+        'ipv6' => ['2001:db8::10', 'fd00::10'],
+    ]);
+
+    Http::assertSent(fn (Request $request): bool => str_ends_with($request->url(), '/nodes/my/qemu/101/agent/network-get-interfaces'));
+    Http::assertSentCount(1);
+});
+
+it('uses the Cloud-Init username when configured', function () {
+    Http::fake(['*/nodes/my/qemu/101/config' => Http::response(['data' => [
+        'ciuser' => ' ubuntu ',
+        'ostype' => 'l26',
+    ]])]);
+
+    expect(usageVirtualMachine()->username())->toBe('ubuntu');
+    Http::assertSentCount(1);
+});
+
+it('uses known Proxmox OS defaults when Cloud-Init has no username', function (string $osType, ?string $username) {
+    Http::fake(['*/nodes/my/qemu/101/config' => Http::response(['data' => ['ostype' => $osType]])]);
+
+    expect(usageVirtualMachine()->username())->toBe($username);
+})->with([
+    'Linux' => ['l26', 'root'],
+    'Windows' => ['win11', 'Administrator'],
+    'unknown OS' => ['other', null],
+]);
+
+it('returns no guest IP addresses when the guest agent is not running', function () {
+    Http::fake(['*/nodes/my/qemu/101/agent/network-get-interfaces' => Http::response(['data' => null], 500)]);
+
+    expect(usageVirtualMachine()->networkInfo())->toBe([
+        'ipv4' => null,
+        'ipv6' => null,
+    ]);
 });
 
 it('returns null filesystems when the guest agent is not running', function () {
