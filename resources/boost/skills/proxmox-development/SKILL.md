@@ -28,6 +28,7 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 - For several Proxmox servers, add entries under `connections` in `config/proxmox.php` and call `Proxmox::connection('name')`. `PROXMOX_CONNECTION` selects the default. Use `Proxmox::connectUsing($name, $config)` for runtime connections.
 - `inventory` mode (`php artisan proxmox:install --mode=inventory --migrate`) publishes the `create_proxmox_tables` migration for `proxmox_clusters`, `proxmox_nodes`, and `proxmox_virtual_machines`, and reads clusters only from the database. Add clusters with `php artisan proxmox:create-cluster {name}`, or move a `.env` connection with `php artisan proxmox:create-cluster {name} --from-env [--connection=default]`. Keep `proxmox_nodes` current with `php artisan proxmox:sync-nodes [cluster...] [--all]` (schedule `--all`) or `$cluster->syncNodes()`; nodes Proxmox no longer lists are kept with the `missing` status.
 - In inventory mode, `Proxmox::connection($name)` resolves the cluster named `$name`. Add `Proxmox\Concerns\HasVirtualMachines` to owner models such as `User`; `Proxmox\Models\VirtualMachine` has a polymorphic `owner`, `cluster`, and `node`. Eloquent writes change inventory records only. Inventory `Cluster`, `Node`, and `VirtualMachine` models expose both `client()` and `resource()` to select their Proxmox API context without fetching. Use `NodeResource::make($node)` and `VirtualMachineResource::make($record)` for the same explicit factories.
+- `NodeResource::make()` requires a saved node with a related cluster. `VirtualMachineResource::make()` requires a saved, non-deleted VM record whose node belongs to the same cluster. The accessors and factories can load database relationships but send no HTTP requests; a VM snapshot remains empty until `refresh()`. The existing `Proxmox\Resources\VirtualMachines\VirtualMachine::make()` factory remains compatible.
 
 ### 2. Read nodes and VMs
 
@@ -86,6 +87,7 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 - `src/Models/` for the inventory `Cluster`, `Node`, and `VirtualMachine` models, and `src/Concerns/HasVirtualMachines.php` for owners.
 - `src/Facades/Proxmox.php` for the facade methods.
 - `src/Resources/Nodes/Node.php` for node status, resources, storages, VM operations, and image listings.
+- `src/Resources/Nodes/NodeResource.php` and `src/Resources/VirtualMachines/VirtualMachineResource.php` for explicit inventory resource classes and factories.
 - `src/Resources/VirtualMachines/` for fetched VMs, CPU/memory updates, disk resizing, listing and creation operations, creation key types, and VM configuration.
 - `src/Resources/Tasks/Task.php` for background tasks.
 - `src/Exceptions/` for package exceptions.

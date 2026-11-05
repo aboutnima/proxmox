@@ -205,7 +205,7 @@ $configuration = $vm->config();          // Fetches VM configuration separately.
 $nodeStatus = $node->status();            // Fetches node status.
 ```
 
-VM resources expose their selected `$vm->node` and `$vm->vmid`. Power and configuration operations leave the stored snapshot unchanged; call `refresh()` when you need updated data.
+`virtualMachine($vmid)` returns a `Proxmox\Resources\VirtualMachines\VirtualMachineResource` with its runtime snapshot already fetched. VM resources expose their selected `$vm->node` and `$vm->vmid`. Power and configuration operations leave the stored snapshot unchanged; call `refresh()` when you need updated data.
 
 Unwrapped API attributes have associative keys sorted alphabetically at every nesting level. List order and field values are preserved, including in VM snapshots and JSON.
 
@@ -596,6 +596,43 @@ The trait provides `$user->virtualMachines()` and `$user->virtualMachines`. Each
 
 Each VM inventory row represents one lifecycle. Since Proxmox can reuse a VMID after deletion, use the inventory row ID when identifying a VM over time.
 
+### Inventory API resources
+
+Every inventory model exposes `client()` and `resource()` as equivalent entry points for live API operations. The returned type depends on the model:
+
+| Inventory model | Entry points | Returned API object |
+| --- | --- | --- |
+| `Proxmox\Models\Cluster` | `$cluster->client()` or `$cluster->resource()` | `Proxmox\Proxmox` |
+| `Proxmox\Models\Node` | `$node->client()` or `$node->resource()` | `Proxmox\Resources\Nodes\NodeResource` |
+| `Proxmox\Models\VirtualMachine` | `$record->client()` or `$record->resource()` | `Proxmox\Resources\VirtualMachines\VirtualMachineResource` |
+
+These methods select the cluster, node, or VM context without an HTTP request. They may load Eloquent relationships from the database. Call a resource method to fetch data or submit an operation:
+
+```php
+// $cluster, $node, and $record are existing inventory models.
+$clusterClient = $cluster->resource();
+$nodeResource = $node->client();
+$vm = $record->resource();
+
+$nodes = $clusterClient->nodes();
+$nodeStatus = $nodeResource->status();
+$vmStatus = $vm->refresh()->toArray();
+```
+
+You can also select node and VM resources through explicit factories:
+
+```php
+use Proxmox\Resources\Nodes\NodeResource;
+use Proxmox\Resources\VirtualMachines\VirtualMachineResource;
+
+$nodeResource = NodeResource::make($node);
+$vm = VirtualMachineResource::make($record);
+```
+
+`NodeResource::make()` requires a saved node with a related cluster. `VirtualMachineResource::make()` requires a saved, non-deleted VM record with a node belonging to the same cluster. The factories and model accessors send no HTTP requests and leave inventory records unchanged.
+
+A VM resource selected from inventory starts with an empty snapshot: `toArray()` returns `[]` until you call `refresh()`. This differs from `node()->virtualMachine($vmid)`, which fetches runtime status immediately. Live operations never update the inventory record.
+
 ### Provisioning and recording a VM
 
 Eloquent VM operations update the database only. Provision the remote VM, wait for completion, and then create its inventory record:
@@ -603,7 +640,7 @@ Eloquent VM operations update the database only. Provision the remote VM, wait f
 ```php
 use Proxmox\Models\Cluster;
 
-// $user is an owner model using HasVirtualMachines.
+// $user uses HasVirtualMachines; $publicKey contains an OpenSSH public key.
 $cluster = Cluster::query()->where('name', 'eu-1')->firstOrFail();
 $node = $cluster->nodes()->where('name', 'pve1')->firstOrFail();
 $client = $node->cluster->client();
@@ -640,23 +677,17 @@ To record an existing VM, create an inventory record with its `cluster_id`, `nod
 
 ### Managing a recorded VM
 
-`Proxmox\Models\VirtualMachine` is the database record. `Proxmox\Resources\VirtualMachines\VirtualMachineResource` is the live API resource:
+Select the live resource from the inventory record, then use its management methods:
 
 ```php
-use Proxmox\Resources\Nodes\NodeResource;
-use Proxmox\Resources\VirtualMachines\VirtualMachineResource;
-
 $record = $user->virtualMachines()->firstOrFail();
-$vm = VirtualMachineResource::make($record);
+$vm = $record->client(); // Or $record->resource().
 
 $vm->setMemory(8192)->wait();
 $status = $vm->refresh()->toArray();
 
-$nodeResource = NodeResource::make($record->node);
-$nodeStatus = $nodeResource->status();
+$nodeStatus = $record->node->resource()->status();
 ```
-
-Inventory clusters, nodes, and VMs also expose `client()` and `resource()` as equivalent entry points. A cluster returns its Proxmox client, a node returns its node-scoped resource, and a VM returns its VM resource. These methods and the factories select the API context without making an HTTP request. The VM factory requires a saved, non-deleted record with a node belonging to the same cluster. Call `refresh()` to populate the VM resource's initially empty snapshot. Live operations never update the inventory record.
 
 Destroy the remote VM and delete the inventory separately:
 
@@ -793,7 +824,8 @@ See [CHANGELOG.md](CHANGELOG.md) for release changes and breaking changes. Earli
 | `Proxmox::virtualMachines()` | Select a node, then call `virtualMachines()->all()` |
 | `node()->makeVirtualMachine($id)->...->create()` | `node()->virtualMachines()->create(['vmid' => $id, ...])` |
 | Inventory VM management methods | `$record->client()` or `$record->resource()` followed by a resource operation |
-| `VirtualMachineResource::make($record)` | `$record->client()` or `$record->resource()` |
+
+Use `Proxmox\Resources\Nodes\NodeResource` and `Proxmox\Resources\VirtualMachines\VirtualMachineResource` for explicit [inventory resource factories](#inventory-api-resources). Both factories remain supported alongside the model accessors. The existing `Proxmox\Resources\VirtualMachines\VirtualMachine` class and its `make()` factory also remain compatible; `VirtualMachineResource` extends that class.
 
 Listing methods return arrays; use Laravel collections for local queries. Node and VM `get()`/`first()` aliases, the VM `vm()` alias, and the pending creation builder have been removed. Creation and mutation methods return task objects rather than UPID strings.
 
