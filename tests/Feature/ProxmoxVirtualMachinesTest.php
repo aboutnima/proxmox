@@ -70,7 +70,7 @@ it('grows a VM disk by a number of GiB and returns the resize task', function ()
     ]);
 
     $vm = Proxmox::node('pve1')->virtualMachine(101)->refresh();
-    $task = $vm->growDisk('scsi0', 10);
+    $task = $vm->growDisk(disk: 'scsi0', gibibytes: 10);
 
     expect($task)->toBeInstanceOf(Task::class)
         ->and($task->node)->toBe('pve1')
@@ -84,20 +84,20 @@ it('grows a VM disk by a number of GiB and returns the resize task', function ()
     Http::assertSentCount(2);
 });
 
-it('validates disk growth arguments before sending a resize request', function (string $disk, int $gigabytes, string $message) {
+it('validates disk growth arguments before sending a resize request', function (string $disk, int $gibibytes, string $message) {
     Http::fake(['*/status/current' => Http::response(['data' => ['status' => 'running']])]);
 
     $vm = Proxmox::node('pve1')->virtualMachine(101);
 
-    expect(fn () => $vm->growDisk($disk, $gigabytes))
+    expect(fn () => $vm->growDisk($disk, $gibibytes))
         ->toThrow(InvalidArgumentException::class, $message);
 
     Http::assertNothingSent();
 })->with([
     'missing disk number' => ['scsi', 10, 'disk must be a disk key'],
     'path traversal' => ['scsi0/../x', 10, 'disk must be a disk key'],
-    'zero size' => ['scsi0', 0, 'gigabytes must be a positive integer'],
-    'negative size' => ['scsi0', -10, 'gigabytes must be a positive integer'],
+    'zero size' => ['scsi0', 0, 'gibibytes must be a positive integer'],
+    'negative size' => ['scsi0', -10, 'gibibytes must be a positive integer'],
 ]);
 
 it('sets VM CPU cores and sockets and returns the configuration task', function () {
@@ -139,7 +139,7 @@ it('sets VM memory in MiB and returns the configuration task', function () {
         '*/config' => Http::response(['data' => 'UPID:pve1:qmconfig']),
     ]);
 
-    $task = Proxmox::node('pve1')->virtualMachine(101)->setMemory(8192);
+    $task = Proxmox::node('pve1')->virtualMachine(101)->setMemory(mebibytes: 8192);
 
     expect($task->upid)->toBe('UPID:pve1:qmconfig');
 
@@ -218,8 +218,8 @@ it('validates CPU and memory values before sending a configuration request', fun
     'zero cores' => [fn (VirtualMachine $vm): Task => $vm->setCpu(0), 'cores must be a positive integer'],
     'negative cores' => [fn (VirtualMachine $vm): Task => $vm->setCpu(-2), 'cores must be a positive integer'],
     'zero sockets' => [fn (VirtualMachine $vm): Task => $vm->setCpu(2, 0), 'sockets must be a positive integer'],
-    'zero memory' => [fn (VirtualMachine $vm): Task => $vm->setMemory(0), 'megabytes must be a positive integer'],
-    'negative memory' => [fn (VirtualMachine $vm): Task => $vm->setMemory(-1024), 'megabytes must be a positive integer'],
+    'zero memory' => [fn (VirtualMachine $vm): Task => $vm->setMemory(0), 'mebibytes must be a positive integer'],
+    'negative memory' => [fn (VirtualMachine $vm): Task => $vm->setMemory(-1024), 'mebibytes must be a positive integer'],
 ]);
 
 it('requires a task ID from the VM configuration endpoint', function (mixed $data) {

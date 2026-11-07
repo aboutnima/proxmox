@@ -705,13 +705,13 @@ class VirtualMachine implements Arrayable, JsonSerializable
      * @throws RequestException
      * @throws UnexpectedResponseException
      */
-    public function setMemory(int $megabytes): Task
+    public function setMemory(int $mebibytes): Task
     {
-        if ($megabytes < 1) {
-            throw new InvalidArgumentException('megabytes must be a positive integer in MiB.');
+        if ($mebibytes < 1) {
+            throw new InvalidArgumentException('mebibytes must be a positive integer.');
         }
 
-        return $this->configure(['memory' => $megabytes]);
+        return $this->configure(['memory' => $mebibytes]);
     }
 
     /**
@@ -723,18 +723,18 @@ class VirtualMachine implements Arrayable, JsonSerializable
      * @throws RequestException
      * @throws UnexpectedResponseException
      */
-    public function growDisk(string $disk, int $gigabytes): Task
+    public function growDisk(string $disk, int $gibibytes): Task
     {
         if (preg_match('/^[a-z]+[0-9]+$/D', $disk) !== 1) {
             throw new InvalidArgumentException('disk must be a disk key such as scsi0 or virtio1.');
         }
 
-        if ($gigabytes < 1) {
-            throw new InvalidArgumentException('gigabytes must be a positive integer.');
+        if ($gibibytes < 1) {
+            throw new InvalidArgumentException('gibibytes must be a positive integer.');
         }
 
         return new Task($this->client, $this->node, ResponseData::taskId(
-            $this->client->put($this->path('resize'), ['disk' => $disk, 'size' => '+'.$gigabytes.'G']),
+            $this->client->put($this->path('resize'), ['disk' => $disk, 'size' => '+'.$gibibytes.'G']),
         ));
     }
 
