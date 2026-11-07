@@ -52,7 +52,7 @@ it('fetches QEMU virtual machines immediately as an array scoped to a node', fun
     Http::assertSentCount(1);
 });
 
-it('hydrates a manageable VM object without refetching when its data is serialized', function () {
+it('selects a VM without fetching until explicitly refreshed', function () {
     $data = ['name' => 'web', 'status' => 'running', 'vmid' => 101];
 
     Http::fake(['*/nodes/my/qemu/101/status/current' => Http::response(['data' => $data])]);
@@ -62,7 +62,13 @@ it('hydrates a manageable VM object without refetching when its data is serializ
     expect($vm)->toBeInstanceOf(VirtualMachine::class)
         ->and($vm->node)->toBe('my')
         ->and($vm->vmid)->toBe(101)
-        ->and($vm->toArray())->toBe($data)
+        ->and($vm->toArray())->toBe([]);
+
+    Http::assertNothingSent();
+
+    $vm->refresh();
+
+    expect($vm->toArray())->toBe($data)
         ->and(json_decode(json_encode($vm, JSON_THROW_ON_ERROR), true, flags: JSON_THROW_ON_ERROR))->toBe($data)
         ->and(response()->json($vm)->getData(true))->toBe($data);
 
@@ -76,7 +82,7 @@ it('updates the stored VM data only when explicitly refreshed', function () {
         ->push(['data' => ['status' => 'stopped', 'uptime' => 0]]),
     ]);
 
-    $vm = Proxmox::node('my')->virtualMachine(101);
+    $vm = Proxmox::node('my')->virtualMachine(101)->refresh();
 
     expect($vm->toArray())->toBe(['status' => 'running'])
         ->and($vm->status())->toBe(['status' => 'stopped'])
@@ -99,7 +105,7 @@ it('preserves fetched VM data when a refresh fails', function (string $failure, 
 
     Http::fake(['*' => $sequence]);
 
-    $vm = Proxmox::node('my')->virtualMachine(101);
+    $vm = Proxmox::node('my')->virtualMachine(101)->refresh();
 
     expect(fn () => $vm->refresh())->toThrow($exception)
         ->and($vm->toArray())->toBe($data);
@@ -312,7 +318,7 @@ it('retrieves individual resource data from its status endpoint', function (bool
 
     Http::fake(['*' => Http::response(['data' => $data])]);
 
-    $attributes = $vms ? Proxmox::node('my')->virtualMachine(101)->toArray() : Proxmox::node('my')->status();
+    $attributes = $vms ? Proxmox::node('my')->virtualMachine(101)->status() : Proxmox::node('my')->status();
 
     expect($attributes)->toBe($data);
 
@@ -346,7 +352,7 @@ it('uses distinct methods for a VM listing and an identified VM', function () {
 
     $node = Proxmox::node('my');
     $list = $node->virtualMachines()->all();
-    $vm = $node->virtualMachine(101);
+    $vm = $node->virtualMachine(101)->refresh();
 
     expect($list)->toBeArray()->toBe($vmList)
         ->and($vm)->toBeInstanceOf(VirtualMachine::class)
@@ -419,8 +425,8 @@ it('keeps fetched VM snapshots independent and accepts integer or string identif
         '*/nodes/other/qemu/201/status/current' => Http::response(['data' => ['vmid' => 201]]),
     ]);
 
-    $first = Proxmox::node('my')->virtualMachine('101');
-    $second = Proxmox::node('other')->virtualMachine(201);
+    $first = Proxmox::node('my')->virtualMachine('101')->refresh();
+    $second = Proxmox::node('other')->virtualMachine(201)->refresh();
 
     expect($first->toArray())->toBe(['vmid' => 101])
         ->and($second->toArray())->toBe(['vmid' => 201])
@@ -447,7 +453,7 @@ it('encodes node names in individual resource paths', function (bool $vms) {
     Http::fake(['*' => Http::response(['data' => ['uptime' => 100]])]);
 
     $node = Proxmox::node(' my?node#name ');
-    $vms ? $node->virtualMachine(101) : $node->status();
+    $vms ? $node->virtualMachine(101)->status() : $node->status();
 
     Http::assertSent(fn (Request $request): bool => $request->url()
         === 'https://proxmox.example.test:8006/api2/json/nodes/my%3Fnode%23name/'
@@ -457,21 +463,21 @@ it('encodes node names in individual resource paths', function (bool $vms) {
 it('automatically throws for unsuccessful individual resource requests', function (int $status, bool $vms) {
     Http::fake(['*' => Http::response(['errors' => ['permission' => 'denied']], $status)]);
 
-    expect(fn () => $vms ? Proxmox::node('my')->virtualMachine(101) : Proxmox::node('my')->status())
+    expect(fn () => $vms ? Proxmox::node('my')->virtualMachine(101)->status() : Proxmox::node('my')->status())
         ->toThrow(RequestException::class, (string) $status);
 })->with([401, 403, 404, 500])->with([false, true]);
 
 it('propagates connection failures from individual resources', function (bool $vms) {
     Http::fake(['*' => Http::failedConnection()]);
 
-    expect(fn () => $vms ? Proxmox::node('my')->virtualMachine(101) : Proxmox::node('my')->status())
+    expect(fn () => $vms ? Proxmox::node('my')->virtualMachine(101)->status() : Proxmox::node('my')->status())
         ->toThrow(ConnectionException::class);
 })->with([false, true]);
 
 it('rejects malformed individual resource data', function (array|string $body, bool $vms) {
     Http::fake(['*' => Http::response($body)]);
 
-    expect(fn () => $vms ? Proxmox::node('my')->virtualMachine(101) : Proxmox::node('my')->status())
+    expect(fn () => $vms ? Proxmox::node('my')->virtualMachine(101)->status() : Proxmox::node('my')->status())
         ->toThrow(UnexpectedValueException::class, 'data');
 })->with([
     'missing data' => [[]],

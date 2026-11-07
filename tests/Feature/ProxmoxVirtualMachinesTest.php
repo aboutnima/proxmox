@@ -55,7 +55,7 @@ it('reads the configuration of a VM', function () {
         API_URL.'/nodes/pve1/qemu/101/config' => Http::response(['data' => ['cores' => 2, 'memory' => '2048']]),
     ]);
 
-    $vm = Proxmox::node('pve1')->virtualMachine(101);
+    $vm = Proxmox::node('pve1')->virtualMachine(101)->refresh();
 
     expect($vm->config())->toBe(['cores' => 2, 'memory' => '2048'])
         ->and($vm->toArray())->toBe(['status' => 'running', 'vmid' => 101]);
@@ -69,7 +69,7 @@ it('grows a VM disk by a number of GiB and returns the resize task', function ()
         '*/resize' => Http::response(['data' => 'UPID:pve1:resize']),
     ]);
 
-    $vm = Proxmox::node('pve1')->virtualMachine(101);
+    $vm = Proxmox::node('pve1')->virtualMachine(101)->refresh();
     $task = $vm->growDisk('scsi0', 10);
 
     expect($task)->toBeInstanceOf(Task::class)
@@ -92,8 +92,7 @@ it('validates disk growth arguments before sending a resize request', function (
     expect(fn () => $vm->growDisk($disk, $gigabytes))
         ->toThrow(InvalidArgumentException::class, $message);
 
-    Http::assertSentCount(1);
-    Http::assertNotSent(fn (Request $request): bool => $request->method() === 'PUT');
+    Http::assertNothingSent();
 })->with([
     'missing disk number' => ['scsi', 10, 'disk must be a disk key'],
     'path traversal' => ['scsi0/../x', 10, 'disk must be a disk key'],
@@ -107,7 +106,7 @@ it('sets VM CPU cores and sockets and returns the configuration task', function 
         '*/config' => Http::response(['data' => 'UPID:pve1:qmconfig']),
     ]);
 
-    $vm = Proxmox::node('pve1')->virtualMachine(101);
+    $vm = Proxmox::node('pve1')->virtualMachine(101)->refresh();
     $task = $vm->setCpu(cores: 4, sockets: 2);
 
     expect($task)->toBeInstanceOf(Task::class)
@@ -166,7 +165,7 @@ it('runs VM power operations and returns their task', function (Closure $operati
     Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
         && $request->url() === API_URL.'/nodes/pve1/qemu/101/status/'.$path
         && $request->body() === $body);
-    Http::assertSentCount(2);
+    Http::assertSentCount(1);
 })->with([
     'start' => [fn (VirtualMachine $vm): Task => $vm->start(), 'start', ''],
     'graceful shutdown' => [fn (VirtualMachine $vm): Task => $vm->shutdown(), 'shutdown', ''],
@@ -200,8 +199,7 @@ it('rejects negative VM operation timeouts before sending the operation', functi
     expect(fn () => $operation(Proxmox::node('pve1')->virtualMachine(101)))
         ->toThrow(InvalidArgumentException::class, 'timeout');
 
-    Http::assertSentCount(1);
-    Http::assertNotSent(fn (Request $request): bool => $request->method() === 'POST');
+    Http::assertNothingSent();
 })->with([
     'shutdown' => [fn (VirtualMachine $vm): Task => $vm->shutdown(timeout: -1)],
     'restart' => [fn (VirtualMachine $vm): Task => $vm->restart(timeout: -1)],
@@ -215,8 +213,7 @@ it('validates CPU and memory values before sending a configuration request', fun
     expect(fn () => $change($vm))
         ->toThrow(InvalidArgumentException::class, $message);
 
-    Http::assertSentCount(1);
-    Http::assertNotSent(fn (Request $request): bool => $request->method() === 'POST');
+    Http::assertNothingSent();
 })->with([
     'zero cores' => [fn (VirtualMachine $vm): Task => $vm->setCpu(0), 'cores must be a positive integer'],
     'negative cores' => [fn (VirtualMachine $vm): Task => $vm->setCpu(-2), 'cores must be a positive integer'],

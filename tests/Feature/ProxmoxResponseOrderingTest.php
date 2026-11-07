@@ -48,7 +48,7 @@ it('keeps VM status snapshot and JSON keys stable across differently ordered res
         ->push(['data' => ['vmid' => 100, 'cpu' => 0.25, 'status' => 'stopped']]),
     ]);
 
-    $vm = Proxmox::node('my')->virtualMachine(100);
+    $vm = Proxmox::node('my')->virtualMachine(100)->refresh();
 
     expect($vm->toArray())->toBe($expected)
         ->and($vm->status())->toBe($expected)
@@ -100,5 +100,5 @@ it('keeps VM configuration keys stable across differently ordered responses', fu
     expect($vm->config())->toBe($expected)
         ->and($vm->config())->toBe($expected);
 
-    Http::assertSentCount(3);
+    Http::assertSentCount(2);
 });

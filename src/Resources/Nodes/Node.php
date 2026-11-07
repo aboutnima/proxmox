@@ -142,17 +142,13 @@ readonly class Node
     }
 
     /**
-     * Fetch a VM's runtime data and retain its management methods.
+     * Select a VM without fetching runtime data.
      *
-     * @throws ConnectionException
      * @throws InvalidArgumentException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws UnexpectedResponseException
      */
     public function virtualMachine(int|string $vmid): VirtualMachineResource
     {
-        return (new VirtualMachineResource($this->client, $this->name, $vmid))->refresh();
+        return new VirtualMachineResource($this->client, $this->name, $vmid);
     }
 
     /**
