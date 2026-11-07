@@ -76,7 +76,7 @@ $node = Proxmox::node('pve1');
 $virtualMachines = $node->virtualMachines()->all();
 
 $vm = $node->virtualMachine(101);
-$status = $vm->toArray();
+$status = $vm->status();
 $configuration = $vm->config();
 ```
 
@@ -195,21 +195,20 @@ Empty listings return `[]`. Collection operations filter the fetched data locall
 $node = Proxmox::node('pve1');             // Selects a node without an HTTP request.
 $operations = $node->virtualMachines();   // Selects VM operations without an HTTP request.
 
-$vm = $node->virtualMachine(101);         // Fetches runtime status immediately.
-$snapshot = $vm->toArray();               // Uses the stored snapshot.
-$response = response()->json($vm);       // Serializes the same snapshot.
-
-$current = $vm->status();                 // Fetches status; leaves the snapshot unchanged.
+$vm = $node->virtualMachine(101);        // Selects a VM without an HTTP request.
+$current = $vm->status();                // Fetches status; leaves the snapshot unchanged.
 $vm->refresh();                          // Fetches status and replaces the snapshot.
+$snapshot = $vm->toArray();              // Uses the stored snapshot.
+$response = response()->json($vm);       // Serializes the same snapshot.
 $configuration = $vm->config();          // Fetches VM configuration separately.
 $nodeStatus = $node->status();            // Fetches node status.
 ```
 
-`virtualMachine($vmid)` returns a `Proxmox\Resources\VirtualMachines\VirtualMachineResource` with its runtime snapshot already fetched. VM resources expose their selected `$vm->node` and `$vm->vmid`. Power and configuration operations leave the stored snapshot unchanged; call `refresh()` when you need updated data.
+`virtualMachine($vmid)` returns a `Proxmox\Resources\VirtualMachines\VirtualMachineResource` without fetching it. Its snapshot is initially empty; call `refresh()` to populate it. VM resources expose their selected `$vm->node` and `$vm->vmid`. Power and configuration operations leave the stored snapshot unchanged.
 
 Unwrapped API attributes have associative keys sorted alphabetically at every nesting level. List order and field values are preserved, including in VM snapshots and JSON.
 
-Node names and VMIDs are validated before requests. VMIDs must be integers or integer strings between `100` and `999999999`. Selecting a missing VM raises an HTTP exception.
+Node names and VMIDs are validated before requests. VMIDs must be integers or integer strings between `100` and `999999999`. Fetching a missing VM raises an HTTP exception.
 
 ### Guest information and uptime
 
@@ -238,26 +237,28 @@ Use categorized resource methods for dashboards and capacity information:
 ```php
 $vm = Proxmox::node('pve1')->virtualMachine(101);
 
-$usage = $vm->usage();
-$allocation = $vm->resources();
-$available = $vm->availableResources();
+$status = $vm->status();
+$usage = $vm->usage(status: $status);
+$allocation = $vm->allocatedResources();
+$available = $vm->availableResources(status: $status);
+$startup = $vm->startup(status: $status);
 
 $node = Proxmox::node('pve1');
 $capacity = $node->resources();
 $storages = $node->storages('images');
 ```
 
-Each call fetches fresh data. Memory values are in MiB and disk sizes are in GiB, rounded down. Raw API status and listing fields retain their original API units.
+By default, each call fetches fresh data. Pass an explicitly fetched status to `usage()`, `availableResources()`, or `startup()` to reuse it; `availableResources()` still fetches disk and guest-agent data as needed. A reused status reflects when it was fetched, so use a recent status for an accurate startup estimate. Memory values are in MiB and disk sizes are in GiB, rounded down. Raw API status and listing fields retain their original API units.
 
 | Method | Returned information |
 | --- | --- |
 | `$vm->usage()` | `status`, `uptime`, CPU `vcpus` and `percent`, memory `total`/`used`/`free`, network `in`/`out`, and disk `read`/`write` |
-| `$vm->resources()` | Applied CPU `sockets`/`cores`/`vcpus`, memory `size`/`balloon`, and disks keyed by device with `storage` and `size` |
+| `$vm->allocatedResources()` | Applied CPU `sockets`/`cores`/`vcpus`, memory `size`/`balloon`, and disks keyed by device with `storage` and `size` |
 | `$vm->availableResources()` | CPU `vcpus`/`used`/`available`, memory `total`/`used`/`available`, per-disk usage, and guest filesystems |
 | `$node->resources()` | CPU `cores`/`percent`/`allocated` and memory `total`/`used`/`free`/`allocated` across non-template QEMU VMs |
 | `$node->storages('images')` | Enabled storages that support VM disks, keyed by name, with `type`, `content`, `shared`, `active`, `total`, `used`, and `available` |
 
-CPU usage is expressed as a percentage. Network and disk I/O from `usage()` are cumulative byte counters since the VM started. `resources()` reads applied configuration and ignores pending changes; memory `balloon` is the minimum ballooning allocation, or `null` when disabled. CD-ROM and Cloud-Init drives are excluded from VM disks.
+CPU usage is expressed as a percentage. Network and disk I/O from `usage()` are cumulative byte counters since the VM started. `allocatedResources()` reads applied configuration and ignores pending changes; memory `balloon` is the minimum ballooning allocation, or `null` when disabled. CD-ROM and Cloud-Init drives are excluded from VM disks. The former VM `resources()` method remains available as a deprecated alias.
 
 `availableResources()` is limited to the VM's allocation and volumes. CPU availability is a percentage of its vCPUs. Available memory uses guest-reported free memory when provided, otherwise allocation minus host-side usage; stopped VMs report their full memory allocation as available. It provides two disk views:
 
@@ -273,6 +274,13 @@ $cpu = $vm->cpuHistory();
 $memory = $vm->memoryHistory('day');
 $network = $vm->networkHistory('week');
 $disk = $vm->diskHistory('month', 'max');
+
+// Fetch all four series for the same timeframe with one request.
+$history = $vm->usageHistory('day', 'max');
+$cpu = $history['cpu'];
+$memory = $history['memory'];
+$network = $history['network'];
+$disk = $history['disk'];
 ```
 
 Each method returns an array of Proxmox RRD data points:
@@ -284,7 +292,7 @@ Each method returns an array of Proxmox RRD data points:
 | `networkHistory()` | `time`, `in`, `out` | Unix timestamp, bytes per second |
 | `diskHistory()` | `time`, `read`, `write` | Unix timestamp, bytes per second |
 
-All four methods accept `timeframe` (`hour`, `day`, `week`, `month`, or `year`) and `consolidation` (`average` or `max`). Defaults are `hour` and `average`. Missing measurements are `null`; preserve them when plotting gaps in history.
+The individual methods and `usageHistory()` accept `timeframe` (`hour`, `day`, `week`, `month`, or `year`) and `consolidation` (`average` or `max`). Defaults are `hour` and `average`. `usageHistory()` returns the same four series under `cpu`, `memory`, `network`, and `disk` keys. Missing measurements are `null`; preserve them when plotting gaps in history.
 
 ## Managing virtual machines
 
@@ -315,8 +323,8 @@ The optional shutdown/restart timeout is a non-negative number of seconds sent t
 ```php
 $vm->setCpu(cores: 4, sockets: 1)->wait();
 $vm->setCores(6)->wait();          // Changes cores per socket; preserves socket count.
-$vm->setMemory(8192)->wait();      // MiB.
-$vm->growDisk('scsi0', 10)->wait(); // Adds 10 GiB to the existing disk.
+$vm->setMemory(mebibytes: 8192)->wait();
+$vm->growDisk(disk: 'scsi0', gibibytes: 10)->wait();
 
 $vm->refresh();
 ```
@@ -598,20 +606,22 @@ Each VM inventory row represents one lifecycle. Since Proxmox can reuse a VMID a
 
 ### Inventory API resources
 
-Every inventory model exposes `client()` and `resource()` as equivalent entry points for live API operations. The returned type depends on the model:
+Select a live API context using the accessor for each inventory model:
 
 | Inventory model | Entry points | Returned API object |
 | --- | --- | --- |
-| `Proxmox\Models\Cluster` | `$cluster->client()` or `$cluster->resource()` | `Proxmox\Proxmox` |
-| `Proxmox\Models\Node` | `$node->client()` or `$node->resource()` | `Proxmox\Resources\Nodes\NodeResource` |
-| `Proxmox\Models\VirtualMachine` | `$record->client()` or `$record->resource()` | `Proxmox\Resources\VirtualMachines\VirtualMachineResource` |
+| `Proxmox\Models\Cluster` | `$cluster->client()` | `Proxmox\Proxmox` |
+| `Proxmox\Models\Node` | `$node->resource()` | `Proxmox\Resources\Nodes\NodeResource` |
+| `Proxmox\Models\VirtualMachine` | `$record->resource()` | `Proxmox\Resources\VirtualMachines\VirtualMachineResource` |
+
+`$cluster->resource()`, `$node->client()`, and `$record->client()` remain available as deprecated aliases.
 
 These methods select the cluster, node, or VM context without an HTTP request. They may load Eloquent relationships from the database. Call a resource method to fetch data or submit an operation:
 
 ```php
 // $cluster, $node, and $record are existing inventory models.
-$clusterClient = $cluster->resource();
-$nodeResource = $node->client();
+$clusterClient = $cluster->client();
+$nodeResource = $node->resource();
 $vm = $record->resource();
 
 $nodes = $clusterClient->nodes();
@@ -631,7 +641,7 @@ $vm = VirtualMachineResource::make($record);
 
 `NodeResource::make()` requires a saved node with a related cluster. `VirtualMachineResource::make()` requires a saved, non-deleted VM record with a node belonging to the same cluster. The factories and model accessors send no HTTP requests and leave inventory records unchanged.
 
-A VM resource selected from inventory starts with an empty snapshot: `toArray()` returns `[]` until you call `refresh()`. This differs from `node()->virtualMachine($vmid)`, which fetches runtime status immediately. Live operations never update the inventory record.
+A VM resource selected from inventory or by `node()->virtualMachine($vmid)` starts with an empty snapshot: `toArray()` returns `[]` until you call `refresh()`. Live operations never update the inventory record.
 
 ### Provisioning and recording a VM
 
@@ -667,7 +677,7 @@ $record = $user->virtualMachines()->create([
     'name' => 'web-'.$vmid,
 ]);
 
-$vm = $record->client();
+$vm = $record->resource();
 $vm->start()->wait();
 ```
 
@@ -681,7 +691,7 @@ Select the live resource from the inventory record, then use its management meth
 
 ```php
 $record = $user->virtualMachines()->firstOrFail();
-$vm = $record->client(); // Or $record->resource().
+$vm = $record->resource();
 
 $vm->setMemory(8192)->wait();
 $status = $vm->refresh()->toArray();
@@ -817,13 +827,15 @@ See [CHANGELOG.md](CHANGELOG.md) for release changes and breaking changes. Earli
 | `Proxmox::getNodes()` | `Proxmox::nodes()` |
 | `Proxmox::getNode($node)` | `Proxmox::node($node)->status()` |
 | `Proxmox::getVirtualMachines($node)` | `Proxmox::node($node)->virtualMachines()->all()` |
-| `Proxmox::getVirtualMachine($node, $id)` | `Proxmox::node($node)->virtualMachine($id)->toArray()` |
+| `Proxmox::getVirtualMachine($node, $id)` | `Proxmox::node($node)->virtualMachine($id)->status()` |
 | `Proxmox::getImages($node, $storage)` | `Proxmox::node($node)->images($storage)` |
 | `Proxmox::createVirtualMachine($node, $config)` | `Proxmox::node($node)->virtualMachines()->create($config)` |
 | `Proxmox::nodes($node)` | `Proxmox::node($node)` |
 | `Proxmox::virtualMachines()` | Select a node, then call `virtualMachines()->all()` |
 | `node()->makeVirtualMachine($id)->...->create()` | `node()->virtualMachines()->create(['vmid' => $id, ...])` |
-| Inventory VM management methods | `$record->client()` or `$record->resource()` followed by a resource operation |
+| Inventory VM management methods | `$record->resource()` followed by a resource operation |
+
+VM selection no longer fetches a snapshot. Replace `virtualMachine($id)->toArray()` with `virtualMachine($id)->refresh()->toArray()` or use `status()` for a fresh array. For named arguments, replace `setMemory(megabytes: ...)` with `setMemory(mebibytes: ...)` and `growDisk(gigabytes: ...)` with `growDisk(gibibytes: ...)`. Positional arguments continue to work.
 
 Use `Proxmox\Resources\Nodes\NodeResource` and `Proxmox\Resources\VirtualMachines\VirtualMachineResource` for explicit [inventory resource factories](#inventory-api-resources). Both factories remain supported alongside the model accessors. The existing `Proxmox\Resources\VirtualMachines\VirtualMachine` class and its `make()` factory also remain compatible; `VirtualMachineResource` extends that class.
 

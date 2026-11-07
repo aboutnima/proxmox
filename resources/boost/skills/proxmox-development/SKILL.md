@@ -27,7 +27,7 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 - Inline PEM certificates require cURL support for `CURLOPT_CAINFO_BLOB`. In inventory mode, `--ca-bundle` stores the file's PEM contents with the cluster. Retain the Laravel encryption keys needed to decrypt stored token secrets.
 - For several Proxmox servers, add entries under `connections` in `config/proxmox.php` and call `Proxmox::connection('name')`. `PROXMOX_CONNECTION` selects the default. Use `Proxmox::connectUsing($name, $config)` for runtime connections.
 - `inventory` mode (`php artisan proxmox:install --mode=inventory --migrate`) publishes the `create_proxmox_tables` migration for `proxmox_clusters`, `proxmox_nodes`, and `proxmox_virtual_machines`, and reads clusters only from the database. Add clusters with `php artisan proxmox:create-cluster {name}`, or move a `.env` connection with `php artisan proxmox:create-cluster {name} --from-env [--connection=default]`. Keep `proxmox_nodes` current with `php artisan proxmox:sync-nodes [cluster...] [--all]` (schedule `--all`) or `$cluster->syncNodes()`; nodes Proxmox no longer lists are kept with the `missing` status.
-- In inventory mode, `Proxmox::connection($name)` resolves the cluster named `$name`. Add `Proxmox\Concerns\HasVirtualMachines` to owner models such as `User`; `Proxmox\Models\VirtualMachine` has a polymorphic `owner`, `cluster`, and `node`. Eloquent writes change inventory records only. Inventory `Cluster`, `Node`, and `VirtualMachine` models expose both `client()` and `resource()` to select their Proxmox API context without fetching. Use `NodeResource::make($node)` and `VirtualMachineResource::make($record)` for the same explicit factories.
+- In inventory mode, `Proxmox::connection($name)` resolves the cluster named `$name`. Add `Proxmox\Concerns\HasVirtualMachines` to owner models such as `User`; `Proxmox\Models\VirtualMachine` has a polymorphic `owner`, `cluster`, and `node`. Eloquent writes change inventory records only. Select live contexts with `$cluster->client()`, `$node->resource()`, and `$record->resource()`. The alternate accessors remain available as deprecated aliases. Use `NodeResource::make($node)` and `VirtualMachineResource::make($record)` for explicit factories.
 - `NodeResource::make()` requires a saved node with a related cluster. `VirtualMachineResource::make()` requires a saved, non-deleted VM record whose node belongs to the same cluster. The accessors and factories can load database relationships but send no HTTP requests; a VM snapshot remains empty until `refresh()`. The existing `Proxmox\Resources\VirtualMachines\VirtualMachine::make()` factory remains compatible.
 
 ### 2. Read nodes and VMs
@@ -38,16 +38,17 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 - Wrap fetched arrays in `collect($data)` to filter, sort, or aggregate locally. Collection operations do not send additional API requests.
 - Resource results sort associative keys alphabetically at every nesting level, including VM snapshots and JSON. List item order and field values are preserved.
 - `node($name)->status()` fetches node status as an array.
-- `node($name)->virtualMachine($id)` immediately fetches runtime status and returns a `Proxmox\Resources\VirtualMachines\VirtualMachineResource` object. An ID is required; use `virtualMachines()->all()` for a listing.
+- `node($name)->virtualMachine($id)` selects a `Proxmox\Resources\VirtualMachines\VirtualMachineResource` without a request. An ID is required; use `virtualMachines()->all()` for a listing. Call `status()` to fetch fresh status or `refresh()` to populate the snapshot.
 - Use `$vm->osInfo()` to get guest operating system fields such as `pretty-name`; install and enable the QEMU guest agent in Proxmox and inside the guest. It returns `null` when the agent is unavailable.
 - Use `$vm->networkInfo()` for separate guest-agent `ipv4` and `ipv6` lists (excluding loopback and link-local; private network addresses are included). Both are `null` if the guest agent is unavailable.
 - Use `$vm->username()` for the Cloud-Init `ciuser`, with `root` / `Administrator` defaults for known Linux / Windows OS types. Unknown OS types without a configured user yield `null`; the username does not verify guest credentials.
 - `$vm->startup()` fetches fresh status and returns `uptime` (seconds) and `started_at` (estimated Unix timestamp: application time minus uptime), without requiring a guest agent or changing the snapshot. Stopped VMs return `0` and `null`. Synchronize clocks; this tracks the QEMU process, not guest OS reboots or a boot count.
 - VM `toArray()` and JSON serialization expose the fetched snapshot without extra requests. `status()` fetches fresh status without changing the snapshot; `refresh()` updates the snapshot and returns the same VM object. `config()` fetches configuration separately.
-- Node names and VM IDs are validated before fetching. IDs must be integers or integer strings between 100 and 999999999. HTTP 404 responses throw when selecting a VM.
-- For categorized data, use VM `usage()` (live status), `resources()` (applied allocation; pending changes ignored), and `availableResources()` (free resources inside the VM's own allocation). On a node, use `resources()` (capacity, live usage, and allocation across non-template VMs) and `storages('images')` (enabled storages keyed by name). Memory is in MiB and disks are in GiB, rounded down, matching `setMemory()` and `growDisk()`. Each call sends fresh requests.
+- Node names and VM IDs are validated before fetching. IDs must be integers or integer strings between 100 and 999999999. HTTP 404 responses throw when fetching a missing VM.
+- For categorized data, use VM `usage()` (live status), `allocatedResources()` (applied allocation; pending changes ignored), and `availableResources()` (free resources inside the VM's own allocation). The VM `resources()` method is a deprecated alias for `allocatedResources()`. On a node, use `resources()` (capacity, live usage, and allocation across non-template VMs) and `storages('images')` (enabled storages keyed by name). Memory is in MiB and disks are in GiB, rounded down, matching `setMemory()` and `growDisk()`.
+- Status-based methods fetch fresh data by default. Reuse an explicit `$status = $vm->status()` with `$vm->usage(status: $status)`, `$vm->startup(status: $status)`, or `$vm->availableResources(status: $status)` to avoid duplicate status requests. The latter still fetches disk and guest-agent data as needed.
 - `availableResources()` never reads node or storage capacity, so it is safe to show to the VM owner. It returns `cpu` (`vcpus`, `used` and `available` as percentages), `memory` (`total`, `used`, `available` in MiB), `disks` (per disk `total`, `used`, `available` in GiB from this VM's storage volumes; works without the guest agent, and `used` is `null` when the storage does not report it), and `filesystems` from the QEMU guest agent (GiB per mountpoint), or `null` when the VM is stopped or the agent is disabled or not running. Keep node `resources()` and `storages()` for administrators.
-- For charts, use `cpuHistory()`, `memoryHistory()` (MiB), `networkHistory()`, and `diskHistory()` (bytes/s). Each takes `$timeframe` (`hour`, `day`, `week`, `month`, `year`) and `$consolidation` (`average`, `max`) and returns a list of points with a Unix `time`; values are `null` where Proxmox has no data.
+- For charts, use `cpuHistory()`, `memoryHistory()` (MiB), `networkHistory()`, and `diskHistory()` (bytes/s). Use `$vm->usageHistory($timeframe, $consolidation)` to fetch all four series in one request. Each takes `$timeframe` (`hour`, `day`, `week`, `month`, `year`) and `$consolidation` (`average`, `max`) and returns points with a Unix `time`; values are `null` where Proxmox has no data.
 
 ### 3. Create VMs and track tasks
 
@@ -67,8 +68,8 @@ Use this skill when a Laravel application needs to integrate with the Proxmox RE
 - `shutdown()` and `restart()` request a graceful guest shutdown; either can take an optional timeout in seconds. `stop()` removes power immediately and `reset()` is an immediate hardware reset, so both can cause data loss.
 - `pause()` keeps state in memory; `hibernate()` saves state to disk and requires VM state storage. `resume()` resumes a paused or hibernated VM.
 - Set CPU with `virtualMachine($id)->setCpu(cores: 4, sockets: 1)`. Cores are per socket; omit `sockets` to keep the current count. `setCores($cores)` is shorthand for `setCpu(cores: $cores)`.
-- Set memory in MiB with `virtualMachine($id)->setMemory(8192)`.
-- Grow an existing disk by GiB with `virtualMachine($id)->growDisk('scsi0', 10)`. It does not attach a new disk, and disks cannot shrink.
+- Set memory in MiB with `virtualMachine($id)->setMemory(mebibytes: 8192)`.
+- Grow an existing disk by GiB with `virtualMachine($id)->growDisk(disk: 'scsi0', gibibytes: 10)`. It does not attach a new disk, and disks cannot shrink.
 - Each method validates positive integers and returns a `Task`.
 - Unless CPU or memory hotplug is enabled, Proxmox can keep CPU and memory changes for a running VM pending until the VM restarts. Wait for the returned task, then call `refresh()` to update the snapshot.
 
@@ -103,7 +104,7 @@ $vms = Proxmox::node('pve1')->virtualMachines()->all();
 $runningVms = collect($vms)->where('status', 'running')->values()->all();
 
 $vm = Proxmox::node('pve1')->virtualMachine(101);
-$data = $vm->toArray();
+$data = $vm->status();
 $config = $vm->config();
 
 $vm->start()->wait();
@@ -166,7 +167,7 @@ $record = $user->virtualMachines()->create([
 ]);
 
 $nodeResource = NodeResource::make($node); // No request.
-$vm = VirtualMachineResource::make($record); // Or $record->client()/resource(); no request.
+$vm = VirtualMachineResource::make($record); // Or $record->resource(); no request.
 $vm->start()->wait();
 $vm->setMemory(4096);
 $vm->stop()->wait();
@@ -174,7 +175,7 @@ $vm->delete()->wait(); // Remote destruction only.
 $record->delete();    // Database only.
 ```
 
-Keep API configuration out of Eloquent attributes. Use the node's cluster client rather than the default facade connection for provisioning. Record existing VMs with normal Eloquent `create()` and explicit `cluster_id`, `node_id`, and `vmid`. Model lifecycle hooks and VM management methods are removed; `client()` and `resource()` only select the live API resource, while `api()`, `creationTask()`, and `withoutProxmox()` are removed. Remote operations never update inventory; handle collisions, task failures, and database failures explicitly.
+Keep API configuration out of Eloquent attributes. Use the node's cluster client rather than the default facade connection for provisioning. Record existing VMs with normal Eloquent `create()` and explicit `cluster_id`, `node_id`, and `vmid`. Model lifecycle hooks and VM management methods are removed; the model accessors select the live API context, while `api()`, `creationTask()`, and `withoutProxmox()` are removed. Remote operations never update inventory; handle collisions, task failures, and database failures explicitly.
 
 In application tests, fake the Laravel HTTP client:
 
