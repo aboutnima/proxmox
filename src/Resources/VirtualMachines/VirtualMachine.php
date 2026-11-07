@@ -94,7 +94,7 @@ class VirtualMachine implements Arrayable, JsonSerializable
      */
     public function osInfo(): ?array
     {
-        return $this->agent('get-osinfo');
+        return $this->guestAgent()->osInfo();
     }
 
     /**
@@ -109,42 +109,7 @@ class VirtualMachine implements Arrayable, JsonSerializable
      */
     public function networkInfo(): array
     {
-        $interfaces = $this->agent('network-get-interfaces');
-
-        /** @var list<string>|null $ipv4 */
-        $ipv4 = null;
-        /** @var list<string>|null $ipv6 */
-        $ipv6 = null;
-
-        if ($interfaces !== null) {
-            $ipv4 = [];
-            $ipv6 = [];
-
-            foreach ($interfaces as $interface) {
-                if (! is_array($interface) || ! is_array($interface['ip-addresses'] ?? null)) {
-                    continue;
-                }
-
-                foreach ($interface['ip-addresses'] as $address) {
-                    $ipAddress = is_array($address) ? ($address['ip-address'] ?? null) : null;
-
-                    if (is_string($ipAddress)
-                        && filter_var($ipAddress, FILTER_VALIDATE_IP) !== false
-                        && ! self::isLoopbackOrLinkLocalAddress($ipAddress)) {
-                        if (filter_var($ipAddress, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
-                            $ipv4[] = $ipAddress;
-                        } elseif (filter_var($ipAddress, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
-                            $ipv6[] = $ipAddress;
-                        }
-                    }
-                }
-            }
-
-            $ipv4 = array_values(array_unique($ipv4));
-            $ipv6 = array_values(array_unique($ipv6));
-        }
-
-        return ['ipv4' => $ipv4, 'ipv6' => $ipv6];
+        return $this->guestAgent()->networkInfo();
     }
 
     /**
@@ -175,28 +140,12 @@ class VirtualMachine implements Arrayable, JsonSerializable
         return $username;
     }
 
-    private static function isLoopbackOrLinkLocalAddress(string $address): bool
-    {
-        $packed = inet_pton($address);
-
-        if ($packed === false) {
-            return false;
-        }
-
-        if (strlen($packed) === 4) {
-            $firstOctet = ord($packed[0]);
-
-            return $firstOctet === 127
-                || ($firstOctet === 169 && ord($packed[1]) === 254);
-        }
-
-        return $packed === str_repeat("\0", 15)."\1"
-            || (ord($packed[0]) === 0xFE && (ord($packed[1]) & 0xC0) === 0x80);
-    }
-
     /**
      * Fetch VM process uptime in seconds and estimate its startup Unix timestamp.
      *
+     * Pass an existing status to reuse it without sending another request.
+     *
+     * @param  array<array-key, mixed>|null  $status
      * @return array{uptime: int, started_at: int|null}
      *
      * @throws ConnectionException
@@ -204,9 +153,9 @@ class VirtualMachine implements Arrayable, JsonSerializable
      * @throws RequestException
      * @throws UnexpectedResponseException
      */
-    public function startup(): array
+    public function startup(?array $status = null): array
     {
-        $status = $this->status();
+        $status ??= $this->status();
 
         if (($status['status'] ?? null) === 'stopped') {
             return ['uptime' => 0, 'started_at' => null];
@@ -272,6 +221,9 @@ class VirtualMachine implements Arrayable, JsonSerializable
     /**
      * Fetch live usage. Memory is in MiB; network and disk I/O are byte counters since the VM started.
      *
+     * Pass an existing status to reuse it without sending another request.
+     *
+     * @param  array<array-key, mixed>|null  $status
      * @return array{
      *     status: string|null,
      *     uptime: int,
@@ -286,9 +238,9 @@ class VirtualMachine implements Arrayable, JsonSerializable
      * @throws RequestException
      * @throws UnexpectedResponseException
      */
-    public function usage(): array
+    public function usage(?array $status = null): array
     {
-        $status = $this->status();
+        $status ??= $this->status();
         $total = ResourceData::mebibytes($status['maxmem'] ?? 0);
         $used = ResourceData::mebibytes($status['mem'] ?? 0);
 
@@ -327,7 +279,7 @@ class VirtualMachine implements Arrayable, JsonSerializable
      * @throws RequestException
      * @throws UnexpectedResponseException
      */
-    public function resources(): array
+    public function allocatedResources(): array
     {
         $config = $this->currentConfig();
         $sockets = ResourceData::integer($config['sockets'] ?? 1) ?: 1;
@@ -349,6 +301,25 @@ class VirtualMachine implements Arrayable, JsonSerializable
     }
 
     /**
+     * @deprecated Use allocatedResources() instead.
+     *
+     * @return array{
+     *     cpu: array{sockets: int, cores: int, vcpus: int},
+     *     memory: array{size: int, balloon: int|null},
+     *     disks: array<string, array{storage: string|null, size: int}>,
+     * }
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
+     */
+    public function resources(): array
+    {
+        return $this->allocatedResources();
+    }
+
+    /**
      * Fetch the free resources inside the VM's own allocation; node and storage capacity is never read.
      *
      * CPU is a percentage of the VM's vCPUs and memory is in MiB. Memory uses the guest-reported free
@@ -357,6 +328,9 @@ class VirtualMachine implements Arrayable, JsonSerializable
      * Filesystems (GiB) come from the QEMU guest agent and are null when the VM is not running, the
      * agent is not enabled, or the agent does not respond.
      *
+     * Pass an existing status to avoid another status request. Disk and guest-agent requests are still made as needed.
+     *
+     * @param  array<array-key, mixed>|null  $status
      * @return array{
      *     cpu: array{vcpus: int, used: float, available: float},
      *     memory: array{total: int, used: int, available: int},
@@ -369,9 +343,9 @@ class VirtualMachine implements Arrayable, JsonSerializable
      * @throws RequestException
      * @throws UnexpectedResponseException
      */
-    public function availableResources(): array
+    public function availableResources(?array $status = null): array
     {
-        $status = $this->status();
+        $status ??= $this->status();
         $running = ($status['status'] ?? null) === 'running';
         $cpu = $running ? min(100.0, ResourceData::percent($status['cpu'] ?? 0)) : 0.0;
         $total = ResourceData::mebibytes($status['maxmem'] ?? 0);
@@ -388,7 +362,7 @@ class VirtualMachine implements Arrayable, JsonSerializable
             ],
             'memory' => ['total' => $total, 'used' => $total - $available, 'available' => $available],
             'disks' => $this->diskUsage(),
-            'filesystems' => $running && ResourceData::integer($status['agent'] ?? 0) === 1 ? $this->filesystems() : null,
+            'filesystems' => $running && ResourceData::integer($status['agent'] ?? 0) === 1 ? $this->guestAgent()->filesystems() : null,
         ];
     }
 
@@ -409,16 +383,7 @@ class VirtualMachine implements Arrayable, JsonSerializable
      */
     public function cpuHistory(string $timeframe = 'hour', string $consolidation = 'average'): array
     {
-        return array_map(static function (array $point): array {
-            $vcpus = ResourceData::nullableNumber($point['maxcpu'] ?? null, 0);
-            $cpu = ResourceData::nullableNumber($point['cpu'] ?? null, 6);
-
-            return [
-                'time' => ResourceData::integer($point['time'] ?? 0),
-                'vcpus' => $vcpus === null ? null : (int) $vcpus,
-                'percent' => $cpu === null ? null : ResourceData::percent($cpu),
-            ];
-        }, $this->history($timeframe, $consolidation));
+        return $this->history()->cpu($timeframe, $consolidation);
     }
 
     /**
@@ -436,11 +401,7 @@ class VirtualMachine implements Arrayable, JsonSerializable
      */
     public function memoryHistory(string $timeframe = 'hour', string $consolidation = 'average'): array
     {
-        return array_map(static fn (array $point): array => [
-            'time' => ResourceData::integer($point['time'] ?? 0),
-            'total' => ResourceData::nullableNumber($point['maxmem'] ?? null) === null ? null : ResourceData::mebibytes($point['maxmem']),
-            'used' => ResourceData::nullableNumber($point['mem'] ?? null) === null ? null : ResourceData::mebibytes($point['mem']),
-        ], $this->history($timeframe, $consolidation));
+        return $this->history()->memory($timeframe, $consolidation);
     }
 
     /**
@@ -458,11 +419,7 @@ class VirtualMachine implements Arrayable, JsonSerializable
      */
     public function networkHistory(string $timeframe = 'hour', string $consolidation = 'average'): array
     {
-        return array_map(static fn (array $point): array => [
-            'time' => ResourceData::integer($point['time'] ?? 0),
-            'in' => ResourceData::nullableNumber($point['netin'] ?? null),
-            'out' => ResourceData::nullableNumber($point['netout'] ?? null),
-        ], $this->history($timeframe, $consolidation));
+        return $this->history()->network($timeframe, $consolidation);
     }
 
     /**
@@ -480,15 +437,20 @@ class VirtualMachine implements Arrayable, JsonSerializable
      */
     public function diskHistory(string $timeframe = 'hour', string $consolidation = 'average'): array
     {
-        return array_map(static fn (array $point): array => [
-            'time' => ResourceData::integer($point['time'] ?? 0),
-            'read' => ResourceData::nullableNumber($point['diskread'] ?? null),
-            'write' => ResourceData::nullableNumber($point['diskwrite'] ?? null),
-        ], $this->history($timeframe, $consolidation));
+        return $this->history()->disk($timeframe, $consolidation);
     }
 
     /**
-     * @return list<array<array-key, mixed>>
+     * Fetch all four usage history series with one request.
+     *
+     * @param  'hour'|'day'|'week'|'month'|'year'  $timeframe
+     * @param  'average'|'max'  $consolidation
+     * @return array{
+     *     cpu: list<array{time: int, vcpus: int|null, percent: float|null}>,
+     *     memory: list<array{time: int, total: int|null, used: int|null}>,
+     *     network: list<array{time: int, in: float|null, out: float|null}>,
+     *     disk: list<array{time: int, read: float|null, write: float|null}>,
+     * }
      *
      * @throws ConnectionException
      * @throws InvalidArgumentException
@@ -496,30 +458,14 @@ class VirtualMachine implements Arrayable, JsonSerializable
      * @throws RequestException
      * @throws UnexpectedResponseException
      */
-    private function history(string $timeframe, string $consolidation): array
+    public function usageHistory(string $timeframe = 'hour', string $consolidation = 'average'): array
     {
-        if (! in_array($timeframe, ['hour', 'day', 'week', 'month', 'year'], true)) {
-            throw new InvalidArgumentException('timeframe must be hour, day, week, month, or year.');
-        }
+        return $this->history()->all($timeframe, $consolidation);
+    }
 
-        if (! in_array($consolidation, ['average', 'max'], true)) {
-            throw new InvalidArgumentException('consolidation must be average or max.');
-        }
-
-        $points = [];
-
-        foreach (ResponseData::list($this->client->get($this->path('rrddata'), [
-            'timeframe' => $timeframe,
-            'cf' => strtoupper($consolidation),
-        ])) as $point) {
-            if (! is_int($point['time'] ?? null)) {
-                continue;
-            }
-
-            $points[] = $point;
-        }
-
-        return $points;
+    private function history(): VirtualMachineHistory
+    {
+        return new VirtualMachineHistory($this->client, $this->path('rrddata'));
     }
 
     /**
@@ -579,68 +525,9 @@ class VirtualMachine implements Arrayable, JsonSerializable
         return $disks;
     }
 
-    /**
-     * Run a read-only guest agent command and return its "result", or null when the agent is not running.
-     *
-     * @return array<array-key, mixed>|null
-     *
-     * @throws ConnectionException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws UnexpectedResponseException
-     */
-    private function agent(string $command): ?array
+    private function guestAgent(): VirtualMachineGuestAgent
     {
-        try {
-            $response = ResponseData::attributes($this->client->get($this->path('agent/'.$command)));
-        } catch (RequestException $exception) {
-            // Proxmox answers 500 when the guest agent is not running inside the VM.
-            if ($exception->response->serverError()) {
-                return null;
-            }
-
-            throw $exception;
-        }
-
-        return is_array($response['result'] ?? null) ? $response['result'] : [];
-    }
-
-    /**
-     * @return list<array{mountpoint: string, type: string|null, total: int, used: int, available: int}>|null
-     *
-     * @throws ConnectionException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws UnexpectedResponseException
-     */
-    private function filesystems(): ?array
-    {
-        $result = $this->agent('get-fsinfo');
-
-        if ($result === null) {
-            return null;
-        }
-
-        $filesystems = [];
-
-        foreach ($result as $filesystem) {
-            if (! is_array($filesystem) || ! is_string($filesystem['mountpoint'] ?? null) || ! array_key_exists('total-bytes', $filesystem)) {
-                continue;
-            }
-
-            $total = ResourceData::integer($filesystem['total-bytes']);
-            $used = min($total, ResourceData::integer($filesystem['used-bytes'] ?? 0));
-
-            $filesystems[] = [
-                'mountpoint' => $filesystem['mountpoint'],
-                'type' => is_string($filesystem['type'] ?? null) ? $filesystem['type'] : null,
-                'total' => ResourceData::gibibytes($total),
-                'used' => ResourceData::gibibytes($used),
-                'available' => ResourceData::gibibytes($total - $used),
-            ];
-        }
-
-        return $filesystems;
+        return new VirtualMachineGuestAgent($this->client, $this->path('agent'));
     }
 
     /**

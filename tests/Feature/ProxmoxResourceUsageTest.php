@@ -150,7 +150,7 @@ it('categorizes the applied VM allocation and skips CD-ROM and Cloud-Init drives
         'virtio0' => '/dev/disk/by-id/ata-disk,size=2147483648',
     ]);
 
-    expect(usageVirtualMachine()->resources())->toBe([
+    expect(usageVirtualMachine()->allocatedResources())->toBe([
         'cpu' => ['sockets' => 2, 'cores' => 2, 'vcpus' => 4],
         'memory' => ['size' => 4096, 'balloon' => 1024],
         'disks' => [
@@ -164,6 +164,37 @@ it('categorizes the applied VM allocation and skips CD-ROM and Cloud-Init drives
     Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
         && $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/qemu/101/config?current=1');
     Http::assertSentCount(1);
+});
+
+it('keeps the former resources method as an allocation alias', function () {
+    fakeVirtualMachineConfig(['cores' => 2, 'memory' => 1024]);
+
+    $vm = usageVirtualMachine();
+
+    expect($vm->resources())->toBe($vm->allocatedResources());
+    Http::assertSentCount(2);
+});
+
+it('reuses an explicitly fetched status for usage, startup, and available resources', function () {
+    Carbon::setTestNow(Carbon::createFromTimestamp(1_700_003_600));
+    fakeAvailableResources([
+        'cpu' => 0.25,
+        'cpus' => 2,
+        'maxmem' => 2048 * USAGE_MIB,
+        'mem' => 512 * USAGE_MIB,
+        'status' => 'running',
+        'uptime' => 3600,
+    ]);
+
+    $vm = usageVirtualMachine();
+    $status = $vm->status();
+
+    expect($vm->usage(status: $status)['cpu'])->toBe(['vcpus' => 2, 'percent' => 25.0])
+        ->and($vm->startup(status: $status))->toBe(['uptime' => 3600, 'started_at' => 1_700_000_000])
+        ->and($vm->availableResources(status: $status)['memory'])->toBe(['total' => 2048, 'used' => 512, 'available' => 1536])
+        ->and($vm->toArray())->toBe([]);
+
+    Http::assertSentCount(2);
 });
 
 it('applies Proxmox defaults and reads vCPU limits and the Proxmox 9 memory format', function (array $config, array $expected) {
@@ -438,6 +469,77 @@ it('maps RRD chart data for CPU, memory, network, and disk I/O', function () {
     Http::assertSent(fn (Request $request): bool => $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/qemu/101/rrddata?timeframe=hour&cf=AVERAGE');
     Http::assertSent(fn (Request $request): bool => $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/qemu/101/rrddata?timeframe=day&cf=MAX');
     Http::assertSentCount(4);
+});
+
+it('fetches all history series with one request', function () {
+    Http::fake(['*/nodes/my/qemu/101/rrddata*' => Http::response(['data' => [
+        ['time' => 1_700_000_000, 'cpu' => 0.125, 'maxcpu' => 2, 'maxmem' => 2048 * USAGE_MIB, 'mem' => 512 * USAGE_MIB, 'netin' => 12, 'netout' => 34, 'diskread' => 56, 'diskwrite' => 78],
+        ['time' => 1_700_000_060],
+        ['cpu' => 0.5],
+    ]])]);
+
+    $history = usageVirtualMachine()->usageHistory('day', 'max');
+
+    expect($history)->toBe([
+        'cpu' => [
+            ['time' => 1_700_000_000, 'vcpus' => 2, 'percent' => 12.5],
+            ['time' => 1_700_000_060, 'vcpus' => null, 'percent' => null],
+        ],
+        'memory' => [
+            ['time' => 1_700_000_000, 'total' => 2048, 'used' => 512],
+            ['time' => 1_700_000_060, 'total' => null, 'used' => null],
+        ],
+        'network' => [
+            ['time' => 1_700_000_000, 'in' => 12.0, 'out' => 34.0],
+            ['time' => 1_700_000_060, 'in' => null, 'out' => null],
+        ],
+        'disk' => [
+            ['time' => 1_700_000_000, 'read' => 56.0, 'write' => 78.0],
+            ['time' => 1_700_000_060, 'read' => null, 'write' => null],
+        ],
+    ]);
+
+    Http::assertSent(fn (Request $request): bool => $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/qemu/101/rrddata?timeframe=day&cf=MAX');
+    Http::assertSentCount(1);
+});
+
+it('fetches fresh history on each combined request', function () {
+    Http::fake(['*/nodes/my/qemu/101/rrddata*' => Http::sequence()
+        ->push(['data' => [['time' => 1, 'cpu' => 0.1]]])
+        ->push(['data' => [['time' => 2, 'cpu' => 0.2]]]),
+    ]);
+
+    $vm = usageVirtualMachine();
+
+    expect($vm->usageHistory()['cpu'])->toBe([['time' => 1, 'vcpus' => null, 'percent' => 10.0]])
+        ->and($vm->usageHistory()['cpu'])->toBe([['time' => 2, 'vcpus' => null, 'percent' => 20.0]]);
+
+    Http::assertSentCount(2);
+});
+
+it('returns four empty history series for an empty response', function () {
+    Http::fake(['*/nodes/my/qemu/101/rrddata*' => Http::response(['data' => []])]);
+
+    expect(usageVirtualMachine()->usageHistory())->toBe(['cpu' => [], 'memory' => [], 'network' => [], 'disk' => []]);
+
+    Http::assertSentCount(1);
+});
+
+it('validates combined history options before requesting', function (string $timeframe, string $consolidation) {
+    expect(fn () => usageVirtualMachine()->usageHistory($timeframe, $consolidation))->toThrow(InvalidArgumentException::class);
+
+    Http::assertNothingSent();
+})->with([
+    ['minute', 'average'],
+    ['hour', 'min'],
+]);
+
+it('propagates combined history request errors', function () {
+    Http::fake(['*/nodes/my/qemu/101/rrddata*' => Http::response([], 403)]);
+
+    expect(fn () => usageVirtualMachine()->usageHistory())->toThrow(RequestException::class, '403');
+
+    Http::assertSentCount(1);
 });
 
 it('rejects invalid chart timeframes and consolidation functions before requesting', function (string $timeframe, string $consolidation, string $message) {
