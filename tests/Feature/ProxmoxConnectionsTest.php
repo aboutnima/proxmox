@@ -200,6 +200,29 @@ it('gives up after the configured number of GET retries', function () {
     expect(fn () => Proxmox::nodes())->toThrow(ConnectionException::class);
 });
 
+it('applies read retry policy to generic requests regardless of method case', function () {
+    config()->set('proxmox.connections.default.retry', ['times' => 1, 'sleep' => 0]);
+
+    Http::fake(['*' => Http::sequence()
+        ->pushFailedConnection()
+        ->push(['data' => 'ok']),
+    ]);
+
+    expect(Proxmox::request('get', 'version')->json('data'))->toBe('ok');
+});
+
+it('does not retry generic write requests', function () {
+    config()->set('proxmox.connections.default.retry', ['times' => 1, 'sleep' => 0]);
+
+    Http::fake(['*' => Http::sequence()
+        ->pushFailedConnection()
+        ->push(['data' => 'unexpected retry']),
+    ]);
+
+    expect(fn () => Proxmox::request('post', 'nodes/pve1/qemu', ['form_params' => ['vmid' => 101]]))
+        ->toThrow(ConnectionException::class);
+});
+
 it('does not retry HTTP error responses', function () {
     config()->set('proxmox.connections.default.retry', ['times' => 2, 'sleep' => 0]);
 

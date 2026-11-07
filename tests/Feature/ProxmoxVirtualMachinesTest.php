@@ -32,17 +32,22 @@ afterEach(function () {
     Carbon::setTestNow();
 });
 
-it('asks Proxmox for the next free VM ID', function (int|string $data) {
+it('asks Proxmox for the next free VM ID', function (int|string $data, int $expected) {
     Http::fake([API_URL.'/cluster/nextid' => Http::response(['data' => $data])]);
 
-    expect(Proxmox::nextVirtualMachineId())->toBe(105);
-})->with([105, '105']);
+    expect(Proxmox::nextVirtualMachineId())->toBe($expected);
+})->with([
+    [105, 105],
+    ['105', 105],
+    [100, 100],
+    ['999999999', 999999999],
+]);
 
 it('rejects malformed next VM ID responses', function (mixed $data) {
     Http::fake(['*' => Http::response(['data' => $data])]);
 
     expect(fn () => Proxmox::nextVirtualMachineId())->toThrow(UnexpectedResponseException::class, 'VM ID');
-})->with([null, '', '0', 'abc', [[101]], 1.5]);
+})->with([null, '', '0', 'abc', [[101]], 1.5, 99, '99', 1000000000, '1000000000', '999999999999999999999999999999']);
 
 it('reads the configuration of a VM', function () {
     Http::fake([

@@ -363,7 +363,7 @@ $task = $client->node('pve1')->virtualMachines()->create([
 $task->wait();
 ```
 
-This creates a VM with an empty disk. Use a cloud image or native installation parameters to provide an operating system. `nextVirtualMachineId()` fetches a free cluster VMID; your application must handle collisions between concurrent provisioning requests.
+This creates a VM with an empty disk. Use a cloud image or native installation parameters to provide an operating system. `nextVirtualMachineId()` fetches a free cluster VMID and validates it is between `100` and `999999999`; malformed or out-of-range responses raise `UnexpectedResponseException`. Your application must handle collisions between concurrent provisioning requests.
 
 ### Readable configuration fields
 

@@ -15,6 +15,7 @@ use Proxmox\Exceptions\InvalidConfigurationException;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Resources\Nodes\Node;
 use Proxmox\Resources\Tasks\Task;
+use Proxmox\Support\Identifier;
 use Proxmox\Support\ResponseData;
 use SensitiveParameter;
 use Throwable;
@@ -107,7 +108,7 @@ readonly class Proxmox
      */
     public function get(string $endpoint, array $query = []): Response
     {
-        return $this->pendingRequest('GET')->get($this->endpoint($endpoint), $query);
+        return $this->request('GET', $endpoint, ['query' => $query]);
     }
 
     /**
@@ -119,7 +120,7 @@ readonly class Proxmox
      */
     public function post(string $endpoint, array $data = []): Response
     {
-        return $this->pendingRequest('POST')->asForm()->post($this->endpoint($endpoint), $data);
+        return $this->request('POST', $endpoint, ['form_params' => $data]);
     }
 
     /**
@@ -131,7 +132,7 @@ readonly class Proxmox
      */
     public function put(string $endpoint, array $data = []): Response
     {
-        return $this->pendingRequest('PUT')->asForm()->put($this->endpoint($endpoint), $data);
+        return $this->request('PUT', $endpoint, ['form_params' => $data]);
     }
 
     /**
@@ -198,11 +199,11 @@ readonly class Proxmox
     {
         $vmid = $this->get('cluster/nextid')->throw()->json('data');
 
-        if ((! is_int($vmid) && ! is_string($vmid)) || preg_match('/^[1-9][0-9]*$/D', (string) $vmid) !== 1) {
+        try {
+            return Identifier::vmid($vmid);
+        } catch (InvalidArgumentException) {
             throw UnexpectedResponseException::expectedVirtualMachineId();
         }
-
-        return (int) $vmid;
     }
 
     /**

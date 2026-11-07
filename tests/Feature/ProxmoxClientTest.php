@@ -104,10 +104,12 @@ it('supports arbitrary HTTP methods and request options', function () {
 
 it('uses form encoding for generic requests with form parameters', function () {
     app(Proxmox::class)->request('post', '/nodes/pve1/qemu', [
+        'query' => ['source' => 'test'],
         'form_params' => ['vmid' => 102],
     ]);
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
+        && $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/pve1/qemu?source=test'
         && $request->body() === 'vmid=102'
         && $request->hasHeader('Content-Type', 'application/x-www-form-urlencoded'));
 });
