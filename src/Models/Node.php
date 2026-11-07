@@ -83,6 +83,8 @@ class Node extends Model
     /**
      * Select this node on its cluster's API client without sending a request.
      *
+     * @deprecated Use resource() instead.
+     *
      * @throws InvalidArgumentException
      * @throws InvalidConfigurationException
      */

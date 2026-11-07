@@ -94,6 +94,8 @@ class VirtualMachine extends Model
     /**
      * Select this inventory VM for live API operations without fetching runtime data.
      *
+     * @deprecated Use resource() instead.
+     *
      * @throws InvalidArgumentException
      * @throws InvalidConfigurationException
      */

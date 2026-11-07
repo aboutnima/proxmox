@@ -139,6 +139,8 @@ class Cluster extends Model
     /**
      * The API client for this cluster.
      *
+     * @deprecated Use client() instead.
+     *
      * @throws InvalidConfigurationException
      */
     public function resource(): Proxmox
