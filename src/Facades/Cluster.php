@@ -30,7 +30,7 @@ use Proxmox\Resources\Tasks\Task;
  * @see ProxmoxManager
  * @see Proxmox
  */
-class ProxmoxCluster extends Facade
+class Cluster extends Facade
 {
     protected static function getFacadeAccessor(): string
     {

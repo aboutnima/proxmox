@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Proxmox\Exceptions\InvalidConfigurationException;
-use Proxmox\Facades\ProxmoxCluster;
+use Proxmox\Facades\Cluster;
 use Proxmox\Tests\Fixtures\CustomCluster;
 
 beforeEach(function () {
@@ -36,7 +36,7 @@ it('resolves connections through the configured cluster model', function (bool $
 
     $client = $fromModel
         ? CustomCluster::findOrFail($cluster->id)->client()
-        : ProxmoxCluster::connection('hetzner');
+        : Cluster::connection('hetzner');
 
     expect($client->nodes())->toBe([['node' => 'pve1']]);
 
@@ -72,7 +72,7 @@ it('lists configured model connections in the about command', function () {
 it('rejects invalid cluster model configuration before querying or requesting', function (mixed $model) {
     config()->set('proxmox.model', $model);
 
-    expect(fn () => ProxmoxCluster::connection('hetzner'))
+    expect(fn () => Cluster::connection('hetzner'))
         ->toThrow(InvalidConfigurationException::class, 'proxmox.model');
 
     Http::assertNothingSent();

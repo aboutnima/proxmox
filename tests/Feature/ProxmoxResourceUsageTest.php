@@ -7,8 +7,8 @@ use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Proxmox\Exceptions\UnexpectedResponseException;
-use Proxmox\Facades\ProxmoxCluster;
-use Proxmox\Models\Cluster;
+use Proxmox\Facades\Cluster;
+use Proxmox\Models\Cluster as ClusterModel;
 use Proxmox\Resources\VirtualMachines\VirtualMachine;
 
 const USAGE_MIB = 1024 ** 2;
@@ -17,7 +17,7 @@ const USAGE_GIB = 1024 ** 3;
 beforeEach(function () {
     $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
-    $this->cluster = Cluster::query()->create([
+    $this->cluster = ClusterModel::query()->create([
         'name' => 'default',
         'url' => 'https://proxmox.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pam!package',
@@ -33,7 +33,7 @@ afterEach(function () {
 
 function usageVirtualMachine(): VirtualMachine
 {
-    return new VirtualMachine(ProxmoxCluster::connection(), 'my', 101);
+    return new VirtualMachine(Cluster::connection(), 'my', 101);
 }
 
 function fakeVirtualMachineConfig(array $config): void
@@ -230,7 +230,7 @@ it('summarizes node capacity, usage, and allocation across non-template VMs', fu
         ]]),
     ]);
 
-    expect(ProxmoxCluster::node('my')->resources())->toBe([
+    expect(Cluster::node('my')->resources())->toBe([
         'cpu' => ['cores' => 16, 'percent' => 25.0, 'allocated' => 6],
         'memory' => ['total' => 65536, 'used' => 24576, 'free' => 40960, 'allocated' => 12288],
     ]);
@@ -244,7 +244,7 @@ it('lists enabled node storages keyed by name in GiB', function () {
         ['active' => 0, 'content' => 'images', 'enabled' => 1, 'shared' => 1, 'storage' => 'nfs', 'type' => 'nfs'],
     ]])]);
 
-    expect(ProxmoxCluster::node('my')->storages('images'))->toBe([
+    expect(Cluster::node('my')->storages('images'))->toBe([
         'local-lvm' => ['type' => 'lvmthin', 'content' => ['images', 'rootdir'], 'shared' => false, 'active' => true, 'total' => 500, 'used' => 100, 'available' => 400],
         'nfs' => ['type' => 'nfs', 'content' => ['images'], 'shared' => true, 'active' => false, 'total' => 0, 'used' => 0, 'available' => 0],
     ]);
@@ -255,7 +255,7 @@ it('lists enabled node storages keyed by name in GiB', function () {
 it('lists all enabled storages without a content filter', function () {
     Http::fake(['*/nodes/my/storage*' => Http::response(['data' => []])]);
 
-    expect(ProxmoxCluster::node('my')->storages())->toBe([]);
+    expect(Cluster::node('my')->storages())->toBe([]);
 
     Http::assertSent(fn (Request $request): bool => $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/storage?enabled=1');
 });
@@ -263,8 +263,8 @@ it('lists all enabled storages without a content filter', function () {
 it('rejects invalid storage content types and storage listings without names', function () {
     Http::fake(['*/nodes/my/storage*' => Http::response(['data' => [['type' => 'dir']]])]);
 
-    expect(fn () => ProxmoxCluster::node('my')->storages('images&x=1'))->toThrow(InvalidArgumentException::class)
-        ->and(fn () => ProxmoxCluster::node('my')->storages())->toThrow(UnexpectedResponseException::class, 'storage name');
+    expect(fn () => Cluster::node('my')->storages('images&x=1'))->toThrow(InvalidArgumentException::class)
+        ->and(fn () => Cluster::node('my')->storages())->toThrow(UnexpectedResponseException::class, 'storage name');
 
     Http::assertSentCount(1);
 });

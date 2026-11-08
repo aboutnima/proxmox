@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
-use Proxmox\Facades\ProxmoxCluster;
-use Proxmox\Models\Cluster;
+use Proxmox\Facades\Cluster;
+use Proxmox\Models\Cluster as ClusterModel;
 
 beforeEach(function () {
     $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
-    $this->cluster = Cluster::query()->create([
+    $this->cluster = ClusterModel::query()->create([
         'name' => 'default',
         'url' => 'https://proxmox.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pam!package',
@@ -39,8 +39,8 @@ it('translates readable fields through facade and client creation', function (bo
     Http::fake(['*' => Http::response(['data' => $task])]);
 
     $node = $direct
-        ? ProxmoxCluster::connection()->node('my')
-        : ProxmoxCluster::node('my');
+        ? Cluster::connection()->node('my')
+        : Cluster::node('my');
     $result = $node->createVirtualMachine($configuration);
 
     expect($result->upid)->toBe($task)
@@ -69,7 +69,7 @@ it('translates readable fields through facade and client creation', function (bo
 it('supports DHCP without a prefix or gateway', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:creation'])]);
 
-    ProxmoxCluster::node('my')->createVirtualMachine([
+    Cluster::node('my')->createVirtualMachine([
         'vmid' => 101,
         'storage' => 'local-lvm',
         'bridge' => 'vmbr0',
@@ -88,7 +88,7 @@ it('supports DHCP without a prefix or gateway', function () {
 it('supports static addresses without a gateway and the full IPv4 prefix range', function (int $prefix) {
     Http::fake(['*' => Http::response(['data' => 'UPID:creation'])]);
 
-    ProxmoxCluster::node('my')->createVirtualMachine([
+    Cluster::node('my')->createVirtualMachine([
         'vmid' => 101,
         'storage' => 'local-lvm',
         'bridge' => 'vmbr0',
@@ -102,7 +102,7 @@ it('supports static addresses without a gateway and the full IPv4 prefix range',
 it('allows readable disks and network cards without Cloud-Init', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:creation'])]);
 
-    ProxmoxCluster::node('my')->createVirtualMachine([
+    Cluster::node('my')->createVirtualMachine([
         'vmid' => 101,
         'disk' => 16,
         'storage' => 'fast_ssd-1',
@@ -121,7 +121,7 @@ it('allows readable disks and network cards without Cloud-Init', function () {
 it('can use an explicitly configured network card with a readable IP', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:creation'])]);
 
-    ProxmoxCluster::node('my')->createVirtualMachine([
+    Cluster::node('my')->createVirtualMachine([
         'vmid' => 101,
         'storage' => 'local-lvm',
         'net0' => 'virtio,bridge=vmbr0,tag=10',
@@ -137,7 +137,7 @@ it('can use an explicitly configured network card with a readable IP', function 
 it('preserves an explicitly chosen disk controller with a readable disk', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:creation'])]);
 
-    ProxmoxCluster::node('my')->createVirtualMachine([
+    Cluster::node('my')->createVirtualMachine([
         'vmid' => 101,
         'disk' => 32,
         'storage' => 'local-lvm',
@@ -151,7 +151,7 @@ it('preserves an explicitly chosen disk controller with a readable disk', functi
 it('keeps native creation options unchanged and does not leak readable settings between calls', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:creation'])]);
 
-    $node = ProxmoxCluster::node('my');
+    $node = Cluster::node('my');
     $node->createVirtualMachine([
         'vmid' => 101,
         'disk' => 32,
@@ -189,7 +189,7 @@ it('rejects invalid readable creation fields before sending a request', function
         'gateway' => '192.0.2.1',
     ], $invalid);
 
-    expect(fn () => ProxmoxCluster::node('my')->createVirtualMachine($configuration))
+    expect(fn () => Cluster::node('my')->createVirtualMachine($configuration))
         ->toThrow(InvalidArgumentException::class, $field);
 
     Http::assertNothingSent();
@@ -227,7 +227,7 @@ it('rejects invalid readable creation fields before sending a request', function
 ]);
 
 it('requires explicit dependencies for readable creation fields', function (array $configuration, string $field) {
-    expect(fn () => ProxmoxCluster::node('my')->createVirtualMachine(['vmid' => 101, ...$configuration]))
+    expect(fn () => Cluster::node('my')->createVirtualMachine(['vmid' => 101, ...$configuration]))
         ->toThrow(InvalidArgumentException::class, $field);
 
     Http::assertNothingSent();

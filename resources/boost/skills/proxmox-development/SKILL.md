@@ -23,22 +23,22 @@ Store named cluster connections and use the live API. The package persists conne
 - Run `composer require aboutnima/proxmox`, `php artisan proxmox:install --migrate`, then `php artisan proxmox:create-cluster hetzner`.
 - The installer publishes configuration and one migration for `clusters`. `--migrate` runs all pending Laravel migrations. Rerun the installer to skip already published files.
 - The connection command prompts for an API URL including `/api2/json`, a token ID in `user@realm!token` form, and a hidden token secret. Optional flags: `--url`, `--token-id`, `--timeout`, `--connect-timeout`, `--ca-bundle`, and `--insecure`. There is no secret command-line option.
-- Import `Proxmox\Facades\ProxmoxCluster` for API calls and `Proxmox\Models\Cluster` for connection records. Laravel also discovers the `ProxmoxCluster` facade alias. API token secrets are encrypted with the application's key and hidden from model arrays and JSON. Validate application input before saving through Eloquent; the setup command validates its own inputs.
+- Import `Proxmox\Facades\Cluster` for API calls and `Proxmox\Models\Cluster as ClusterModel` for connection records when using both classes in one file. Laravel also discovers the `Cluster` facade alias. API token secrets are encrypted with the application's key and hidden from model arrays and JSON. Validate application input before saving through Eloquent; the setup command validates its own inputs.
 - To customize cluster records, extend `Proxmox\Models\Cluster` in the application and set `'model' => App\Models\Cluster::class` in `config/proxmox.php`. Connection lookup, cluster creation and duplicate checks, and the `about` listing use this class. Keep inherited credential casts, hidden fields, and connection settings; use the custom class for application queries. Rebuild cached configuration after changing the option.
 - The inherited table is `clusters`. Applications overriding the table or database connection supply their own matching migrations; the package still publishes the default cluster migration. Invalid model classes raise `InvalidConfigurationException`.
 - Keep TLS verification enabled. `ca_bundle` accepts a certificate file path or PEM contents; the command stores a supplied file's contents. Inline PEM certificates require cURL support for `CURLOPT_CAINFO_BLOB`.
 - The default stored connection name comes from `PROXMOX_CONNECTION` / `proxmox.default`, initially `default`. There are no package modes or configured connection lists.
-- Every `ProxmoxCluster::connection($name)` call reads stored settings and builds a fresh client. Bulk updates, renames, and deletions are reflected on subsequent lookups without cache invalidation or model listeners. Existing client variables retain their original settings. Container injection of `Proxmox\Proxmox` also resolves a fresh default client.
-- `Cluster::findOrFail(1)->client()->nodes()` uses a stored model directly. `client()` builds a fresh `Proxmox\Proxmox` client from the model's current attributes, including unsaved changes, with no extra database lookup or implicit save. Creating the client makes no HTTP request. Refresh the model first to reload settings changed elsewhere. Custom cluster models inherit this method.
-- `ProxmoxCluster::connectUsing($name, $settings)` returns a standalone client without saving a database record or registering its name. Use the returned client directly; `connection($name)` still resolves stored clusters. HTTP settings include `timeout`, `connect_timeout`, `verify_ssl`, `ca_bundle`, and `retry` (`times`, `sleep`). GET retries apply only to connection failures; writes are not retried automatically.
+- Every `Cluster::connection($name)` call reads stored settings and builds a fresh client. Bulk updates, renames, and deletions are reflected on subsequent lookups without cache invalidation or model listeners. Existing client variables retain their original settings. Container injection of `Proxmox\Proxmox` also resolves a fresh default client.
+- `ClusterModel::findOrFail(1)->client()->nodes()` uses a stored model directly. `client()` builds a fresh `Proxmox\Proxmox` client from the model's current attributes, including unsaved changes, with no extra database lookup or implicit save. Creating the client makes no HTTP request. Refresh the model first to reload settings changed elsewhere. Custom cluster models inherit this method.
+- `Cluster::connectUsing($name, $settings)` returns a standalone client without saving a database record or registering its name. Use the returned client directly; `connection($name)` still resolves stored clusters. HTTP settings include `timeout`, `connect_timeout`, `verify_ssl`, `ca_bundle`, and `retry` (`times`, `sleep`). GET retries apply only to connection failures; writes are not retried automatically.
 - Query the configured cluster model to list stored connections. The package maintains no connection registry in memory.
 
 ### 2. Fetch live data
 
 ```php
-use Proxmox\Facades\ProxmoxCluster;
+use Proxmox\Facades\Cluster;
 
-$connection = ProxmoxCluster::connection('hetzner');
+$connection = Cluster::connection('hetzner');
 $nodes = $connection->nodes();
 $node = $connection->node('pve1');
 $vms = $node->virtualMachines();
@@ -94,7 +94,7 @@ $vm->growDisk('scsi0', 10)->wait();
 - `README.md` for install, connection settings, creation parameters, management, testing, and upgrade guidance.
 - `config/proxmox.php` for the default stored connection name and configurable cluster model class.
 - `src/Models/Cluster.php` for stored connection settings and `client()`.
-- `src/Facades/ProxmoxCluster.php` for the public facade.
+- `src/Facades/Cluster.php` for the public facade.
 - `src/Resources/Nodes/Node.php` for live node selection, listings, and VM creation.
 - `src/Resources/VirtualMachines/VirtualMachine.php` for live VM data and management.
 - `src/Resources/Tasks/Task.php` for background tasks.
@@ -103,9 +103,9 @@ $vm->growDisk('scsi0', 10)->wait();
 
 ```php
 use Illuminate\Support\Facades\Http;
-use Proxmox\Facades\ProxmoxCluster;
+use Proxmox\Facades\Cluster;
 
-$connection = ProxmoxCluster::connectUsing('testing', [
+$connection = Cluster::connectUsing('testing', [
     'url' => 'https://proxmox.example.test:8006/api2/json',
     'api_token_id' => 'laravel@pve!test',
     'api_token_secret' => 'test-secret',

@@ -11,21 +11,21 @@ use Proxmox\Exceptions\ProxmoxException;
 use Proxmox\Exceptions\TaskFailedException;
 use Proxmox\Exceptions\TaskTimeoutException;
 use Proxmox\Exceptions\UnexpectedResponseException;
-use Proxmox\Facades\ProxmoxCluster;
-use Proxmox\Models\Cluster;
+use Proxmox\Facades\Cluster;
+use Proxmox\Models\Cluster as ClusterModel;
 use Proxmox\Proxmox as ProxmoxClient;
 
 beforeEach(function () {
     $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
-    $this->cluster = Cluster::query()->create([
+    $this->cluster = ClusterModel::query()->create([
         'name' => 'default',
         'url' => 'https://proxmox.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pam!package',
         'api_token_secret' => 'token-secret',
     ]);
 
-    Cluster::query()->create([
+    ClusterModel::query()->create([
         'name' => 'backup',
         'url' => 'https://backup.example.test:8006/api2/json/',
         'api_token_id' => 'backup@pve!package',
@@ -38,12 +38,12 @@ beforeEach(function () {
 it('resolves a fresh client for every named connection lookup', function () {
     Http::fake(['*' => Http::response(['data' => [['node' => 'backup1']]])]);
 
-    $backup = ProxmoxCluster::connection('backup');
+    $backup = Cluster::connection('backup');
 
     expect($backup)->toBeInstanceOf(ProxmoxClient::class)
         ->and($backup->getName())->toBe('backup')
-        ->and(ProxmoxCluster::connection('backup'))->not->toBe($backup)
-        ->and(ProxmoxCluster::connection())->not->toBe($backup)
+        ->and(Cluster::connection('backup'))->not->toBe($backup)
+        ->and(Cluster::connection())->not->toBe($backup)
         ->and(collect($backup->nodes())->pluck('node')->all())->toBe(['backup1']);
 
     Http::assertSent(fn (Request $request): bool => $request->url() === 'https://backup.example.test:8006/api2/json/nodes'
@@ -53,25 +53,25 @@ it('resolves a fresh client for every named connection lookup', function () {
 it('forwards facade calls to the configured default connection', function () {
     Http::fake(['*' => Http::response(['data' => []])]);
 
-    ProxmoxCluster::setDefaultConnection('backup');
+    Cluster::setDefaultConnection('backup');
 
-    expect(ProxmoxCluster::getDefaultConnection())->toBe('backup')
-        ->and(ProxmoxCluster::getName())->toBe('backup')
+    expect(Cluster::getDefaultConnection())->toBe('backup')
+        ->and(Cluster::getName())->toBe('backup')
         ->and(app(ProxmoxClient::class)->getName())->toBe('backup');
 
-    ProxmoxCluster::nodes();
+    Cluster::nodes();
 
     Http::assertSent(fn (Request $request): bool => str_starts_with($request->url(), 'https://backup.example.test'));
 });
 
 it('reads stored changes made without model events on the next lookup', function () {
-    $first = ProxmoxCluster::connection();
+    $first = Cluster::connection();
 
-    Cluster::query()->whereKey($this->cluster->id)->update([
+    ClusterModel::query()->whereKey($this->cluster->id)->update([
         'url' => 'https://updated.example.test:8006/api2/json',
     ]);
 
-    $second = ProxmoxCluster::connection();
+    $second = Cluster::connection();
     Http::fake(['*' => Http::response(['data' => []])]);
     $second->nodes();
 
@@ -80,14 +80,14 @@ it('reads stored changes made without model events on the next lookup', function
 });
 
 it('fails clearly for clusters that are not registered', function () {
-    expect(fn () => ProxmoxCluster::connection('missing'))
+    expect(fn () => Cluster::connection('missing'))
         ->toThrow(InvalidConfigurationException::class, 'Proxmox cluster [missing] does not exist');
 });
 
 it('requires a positive connect timeout', function () {
     $this->cluster->update(['connect_timeout' => 0]);
 
-    expect(fn () => ProxmoxCluster::get('nodes'))
+    expect(fn () => Cluster::get('nodes'))
         ->toThrow(InvalidConfigurationException::class, 'connect_timeout');
 
     Http::assertNothingSent();
@@ -125,7 +125,7 @@ it('verifies TLS with a configured CA file path', function () {
         return Http::response(['data' => []]);
     });
 
-    ProxmoxCluster::nodes();
+    Cluster::nodes();
 
     expect($options['verify'])->toBe('/etc/ssl/proxmox-ca.pem')
         ->and(app(ProxmoxClient::class)->__debugInfo()['caBundle'])->toBe('/etc/ssl/proxmox-ca.pem');
@@ -142,7 +142,7 @@ it('verifies TLS with an inline PEM certificate', function () {
         return Http::response(['data' => []]);
     });
 
-    ProxmoxCluster::nodes();
+    Cluster::nodes();
 
     expect($options['verify'])->toBeTrue()
         ->and($options['curl'][CURLOPT_CAINFO_BLOB])->toBe($pem)
@@ -160,7 +160,7 @@ it('ignores the CA bundle when TLS verification is disabled', function () {
         return Http::response(['data' => []]);
     });
 
-    ProxmoxCluster::nodes();
+    Cluster::nodes();
 
     expect($options['verify'])->toBeFalse()
         ->and($options)->not->toHaveKey('curl');
@@ -169,14 +169,14 @@ it('ignores the CA bundle when TLS verification is disabled', function () {
 it('builds standalone runtime connections without registering them by name', function () {
     Http::fake(['*' => Http::response(['data' => []])]);
 
-    $client = ProxmoxCluster::connectUsing('runtime', [
+    $client = Cluster::connectUsing('runtime', [
         'url' => 'https://runtime.example.test:8006/api2/json',
         'api_token_id' => 'runtime@pve!app',
         'api_token_secret' => 'runtime-secret',
     ]);
 
     expect($client->getName())->toBe('runtime')
-        ->and(fn () => ProxmoxCluster::connection('runtime'))->toThrow(InvalidConfigurationException::class, 'does not exist');
+        ->and(fn () => Cluster::connection('runtime'))->toThrow(InvalidConfigurationException::class, 'does not exist');
 
     $client->nodes();
 
@@ -184,12 +184,12 @@ it('builds standalone runtime connections without registering them by name', fun
 });
 
 it('keeps runtime settings separate from a stored cluster with the same name', function () {
-    $temporary = ProxmoxCluster::connectUsing('default', [
+    $temporary = Cluster::connectUsing('default', [
         'url' => 'https://runtime.example.test:8006/api2/json',
         'api_token_id' => 'runtime@pve!app',
         'api_token_secret' => 'runtime-secret',
     ]);
-    $stored = ProxmoxCluster::connection('default');
+    $stored = Cluster::connection('default');
 
     Http::fake(['*' => Http::response(['data' => []])]);
     $temporary->nodes();
@@ -199,7 +199,7 @@ it('keeps runtime settings separate from a stored cluster with the same name', f
         fn (Request $request): bool => str_starts_with($request->url(), 'https://runtime.example.test'),
         fn (Request $request): bool => str_starts_with($request->url(), 'https://proxmox.example.test'),
     ]);
-    expect(Cluster::query()->count())->toBe(2);
+    expect(ClusterModel::query()->count())->toBe(2);
 });
 
 it('keeps the API token secret out of debug output', function () {
@@ -218,7 +218,7 @@ it('retries GET requests after connection failures when configured', function ()
         ->push(['data' => [['node' => 'pve1']]]),
     ]);
 
-    expect(collect(ProxmoxCluster::nodes())->pluck('node')->all())->toBe(['pve1']);
+    expect(collect(Cluster::nodes())->pluck('node')->all())->toBe(['pve1']);
 });
 
 it('gives up after the configured number of GET retries', function () {
@@ -230,7 +230,7 @@ it('gives up after the configured number of GET retries', function () {
         ->push(['data' => []]),
     ]);
 
-    expect(fn () => ProxmoxCluster::nodes())->toThrow(ConnectionException::class);
+    expect(fn () => Cluster::nodes())->toThrow(ConnectionException::class);
 });
 
 it('applies read retry policy to generic requests regardless of method case', function () {
@@ -241,7 +241,7 @@ it('applies read retry policy to generic requests regardless of method case', fu
         ->push(['data' => 'ok']),
     ]);
 
-    expect(ProxmoxCluster::request('get', 'version')->json('data'))->toBe('ok');
+    expect(Cluster::request('get', 'version')->json('data'))->toBe('ok');
 });
 
 it('does not retry generic write requests', function () {
@@ -252,7 +252,7 @@ it('does not retry generic write requests', function () {
         ->push(['data' => 'unexpected retry']),
     ]);
 
-    expect(fn () => ProxmoxCluster::request('post', 'nodes/pve1/qemu', ['form_params' => ['vmid' => 101]]))
+    expect(fn () => Cluster::request('post', 'nodes/pve1/qemu', ['form_params' => ['vmid' => 101]]))
         ->toThrow(ConnectionException::class);
 });
 
@@ -264,7 +264,7 @@ it('does not retry HTTP error responses', function () {
         ->push(['data' => []]),
     ]);
 
-    expect(ProxmoxCluster::get('nodes')->status())->toBe(500);
+    expect(Cluster::get('nodes')->status())->toBe(500);
 
     Http::assertSentCount(1);
 });
@@ -277,7 +277,7 @@ it('never retries write requests', function (string $method) {
         ->push(['data' => 'UPID:retried']),
     ]);
 
-    expect(fn () => ProxmoxCluster::{$method}('nodes/pve1/qemu/101/status/start'))->toThrow(ConnectionException::class);
+    expect(fn () => Cluster::{$method}('nodes/pve1/qemu/101/status/start'))->toThrow(ConnectionException::class);
 })->with(['post', 'put', 'delete']);
 
 it('adds connection details without secrets to the about command', function () {

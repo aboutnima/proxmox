@@ -6,14 +6,14 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Proxmox\Exceptions\InvalidConfigurationException;
-use Proxmox\Facades\ProxmoxCluster;
-use Proxmox\Models\Cluster;
+use Proxmox\Facades\Cluster;
+use Proxmox\Models\Cluster as ClusterModel;
 use Proxmox\Proxmox;
 
 beforeEach(function () {
     $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
-    $this->cluster = Cluster::query()->create([
+    $this->cluster = ClusterModel::query()->create([
         'name' => 'default',
         'url' => 'https://eu.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pve!app',
@@ -49,7 +49,7 @@ it('applies connection defaults and preserves per-cluster TLS settings', functio
 });
 
 it('builds an API client directly from a cluster record without another lookup', function () {
-    $cluster = Cluster::findOrFail($this->cluster->id);
+    $cluster = ClusterModel::findOrFail($this->cluster->id);
     Http::fake(['*' => Http::response(['data' => [['node' => 'pve1']]])]);
     DB::enableQueryLog();
 
@@ -70,7 +70,7 @@ it('builds an API client directly from a cluster record without another lookup',
 });
 
 it('builds fresh model clients using current attributes without saving them', function () {
-    $cluster = Cluster::findOrFail($this->cluster->id);
+    $cluster = ClusterModel::findOrFail($this->cluster->id);
     $first = $cluster->client();
     $cluster->fill([
         'name' => 'temporary',
@@ -82,7 +82,7 @@ it('builds fresh model clients using current attributes without saving them', fu
     expect($second !== $first)->toBeTrue()
         ->and($first->getName())->toBe('default')
         ->and($second->getName())->toBe('temporary')
-        ->and(ProxmoxCluster::getDefaultConnection())->toBe('default')
+        ->and(Cluster::getDefaultConnection())->toBe('default')
         ->and($cluster->fresh()->api_token_secret)->toBe('cluster-secret');
 
     Http::fake(['*' => Http::response(['data' => []])]);
@@ -97,9 +97,9 @@ it('builds fresh model clients using current attributes without saving them', fu
 });
 
 it('uses updated credentials when resolving the next connection', function () {
-    $first = ProxmoxCluster::connection();
+    $first = Cluster::connection();
     $this->cluster->update(['api_token_secret' => 'rotated-secret']);
-    $second = ProxmoxCluster::connection();
+    $second = Cluster::connection();
 
     Http::fake(['*' => Http::response(['data' => []])]);
     $second->nodes();
@@ -109,18 +109,18 @@ it('uses updated credentials when resolving the next connection', function () {
 });
 
 it('resolves renamed clusters without model event invalidation', function () {
-    $first = ProxmoxCluster::connection();
-    Cluster::query()->whereKey($this->cluster->id)->update(['name' => 'hetzner']);
+    $first = Cluster::connection();
+    ClusterModel::query()->whereKey($this->cluster->id)->update(['name' => 'hetzner']);
 
-    expect(ProxmoxCluster::connection('hetzner'))->not->toBe($first)
-        ->and(fn () => ProxmoxCluster::connection('default'))->toThrow(InvalidConfigurationException::class);
+    expect(Cluster::connection('hetzner'))->not->toBe($first)
+        ->and(fn () => Cluster::connection('default'))->toThrow(InvalidConfigurationException::class);
 });
 
 it('rejects a deleted cluster even when deletion bypasses model events', function () {
-    ProxmoxCluster::connection();
-    Cluster::query()->whereKey($this->cluster->id)->delete();
+    Cluster::connection();
+    ClusterModel::query()->whereKey($this->cluster->id)->delete();
 
-    expect(fn () => ProxmoxCluster::connection())->toThrow(InvalidConfigurationException::class, 'does not exist');
+    expect(fn () => Cluster::connection())->toThrow(InvalidConfigurationException::class, 'does not exist');
     Http::assertNothingSent();
 });
 
