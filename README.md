@@ -83,7 +83,7 @@ php artisan proxmox:create-cluster hetzner \
 
 The command accepts `--timeout=30`, `--connect-timeout=10`, and `--insecure`. The API token secret is prompted for interactively; it has no command-line option. The command validates unique cluster names containing 1–100 letters, numbers, hyphens, or underscores. A CA file supplied to the command is stored as PEM contents. Validate application-managed input before saving connection records through Eloquent.
 
-For application-managed setup, use the package's only Eloquent model. Import it as `ClusterRecord` to distinguish it from the `Cluster` facade:
+For application-managed setup, use the configured cluster model. The default is `Proxmox\Models\Cluster`; import it as `ClusterRecord` to distinguish it from the `Cluster` facade:
 
 ```php
 use Proxmox\Models\Cluster as ClusterRecord;
@@ -105,13 +105,40 @@ The public classes have separate responsibilities:
 | Class | Responsibility |
 | --- | --- |
 | `Proxmox\Facades\Cluster` | Resolve a named or default API connection |
-| `Proxmox\Models\Cluster` | Store connection credentials and HTTP settings with Eloquent |
+| `Proxmox\Models\Cluster` | Default Eloquent model for connection credentials and HTTP settings |
 | `Proxmox\Proxmox` | Send authenticated HTTP requests and select live node/task contexts |
 | `Proxmox\Resources\Nodes\Node` | Fetch node data and select, create, or list remote VMs |
 | `Proxmox\Resources\VirtualMachines\VirtualMachine` | Read and manage a remote VM, with an optional in-memory status snapshot |
 | `Proxmox\Resources\Tasks\Task` | Inspect or wait for remote background work |
 
 Fetching nodes or VMs never creates local records. VM creation and deletion affect Proxmox; applications persist their own service records separately.
+
+### Custom cluster model
+
+Extend the package model in your application to add cluster-specific relations or behavior:
+
+```php
+namespace App\Models;
+
+use Proxmox\Models\Cluster;
+
+class ProxmoxCluster extends Cluster
+{
+    // Your application's cluster relations and behavior.
+}
+```
+
+Set its class in the published `config/proxmox.php`:
+
+```php
+'model' => App\Models\ProxmoxCluster::class,
+```
+
+The default is `Proxmox\Models\Cluster::class`. The configured class must extend that model to inherit encrypted credentials, hidden secrets, connection defaults, and `toConnectionConfig()`.
+
+Connection lookups, `proxmox:create-cluster` (including duplicate-name checks), and `php artisan about --only=proxmox` use the configured model. Use your application's model for its own Eloquent queries too. Rebuild Laravel's configuration cache after changing this option if configuration is cached.
+
+The inherited table is `proxmox_clusters`. If you override the table or database connection, supply matching application migrations; the package migration still creates the default table.
 
 ### Connection settings
 
@@ -207,12 +234,9 @@ Unwrapped API attributes have associative keys sorted alphabetically at every ne
 
 Node names and VMIDs are validated before requests. VMIDs must be integers or integer strings between `100` and `999999999`. Fetching a missing VM raises an HTTP exception.
 
-### Guest information and uptime
+### Guest network information and uptime
 
 ```php
-$os = $vm->osInfo();
-$osName = $os['pretty-name'] ?? null;
-
 $addresses = $vm->networkInfo();
 // ['ipv4' => ['192.0.2.10'], 'ipv6' => ['2001:db8::10']]
 
@@ -221,7 +245,7 @@ $startup = $vm->startup();
 // ['uptime' => 3600, 'started_at' => 1700000000]
 ```
 
-`osInfo()` and `networkInfo()` use the QEMU guest agent, which must be enabled in Proxmox and installed and running inside the guest. When the agent is unavailable, OS information is `null` and both address lists are `null`. Address lists exclude loopback and link-local addresses, include private addresses, and remove duplicates. Permission errors still throw.
+`networkInfo()` uses the QEMU guest agent, which must be enabled in Proxmox and installed and running inside the guest. When the agent is unavailable, both address lists are `null`. Address lists exclude loopback and link-local addresses, include private addresses, and remove duplicates. Permission errors still throw.
 
 `username()` reads the Cloud-Init `ciuser`, falling back to `root` for known Linux OS types or `Administrator` for Windows OS types. Unknown types without a configured user return `null`. This is configuration information, not a verification of guest credentials.
 
@@ -540,7 +564,7 @@ Resource methods unwrap responses, validate their expected shape, and raise exce
 | `Illuminate\Http\Client\ConnectionException` | An HTTP connection failed |
 | `Illuminate\Http\Client\RequestException` | Proxmox returned an HTTP error |
 | `InvalidArgumentException` | An identifier or operation argument is invalid |
-| `Proxmox\Exceptions\InvalidConfigurationException` | A stored cluster or required connection setting is missing or invalid |
+| `Proxmox\Exceptions\InvalidConfigurationException` | A stored cluster, configured model class, or required connection setting is missing or invalid |
 | `Proxmox\Exceptions\UnexpectedResponseException` | Proxmox returned data in an unexpected shape |
 | `Proxmox\Exceptions\TaskFailedException` | A waited task finished with an error; exposes `upid` and `exitStatus` |
 | `Proxmox\Exceptions\TaskTimeoutException` | Task polling exceeded its timeout; exposes `upid` and `timeout` |
@@ -570,7 +594,7 @@ it('lists virtual machines on a node', function () {
 });
 ```
 
-To test stored connection resolution, run the package migration and create a `Proxmox\Models\Cluster` record in your test database. Node/VM API tests need no package node or VM records. Fake task status endpoints when waiting for tasks, including `status: stopped` and `exitstatus: OK` for a successful result.
+To test stored connection resolution, run the package migration and create a record through the configured cluster model in your test database. Node/VM API tests need no package node or VM records. Fake task status endpoints when waiting for tasks, including `status: stopped` and `exitstatus: OK` for a successful result.
 
 ### Package development
 
@@ -592,7 +616,7 @@ After cloning the repository, run `composer install`. Available checks and workb
 This version simplifies persistence to stored cluster connections. Update consumers before upgrading:
 
 - Import `Proxmox\Facades\Cluster` instead of `Proxmox\Facades\Proxmox`.
-- Store connections in `proxmox_clusters`. Configuration-backed connections and the `api` / `inventory` modes have been removed. `config/proxmox.php` contains only `default`.
+- Store connections in `proxmox_clusters`. Configuration-backed connections and the `api` / `inventory` modes have been removed. `config/proxmox.php` contains `default` and the cluster `model` class.
 - Replace `node($name)->virtualMachines()->all()` with `node($name)->virtualMachines()`.
 - Replace `node($name)->virtualMachines()->create($configuration)` with `node($name)->createVirtualMachine($configuration)`.
 - Replace package Eloquent node/VM models, `HasVirtualMachines`, model resource accessors, and inventory resource factories with application-owned records and explicit `connection()->node()->virtualMachine()` selection.

@@ -13,7 +13,7 @@ Use this skill when a Laravel application integrates with Proxmox through `about
 
 ## Primary Goal
 
-Store named cluster connections and use the live API. The package's only Eloquent model is `Proxmox\Models\Cluster`, backed by `proxmox_clusters`. Let the consuming application own node/VM persistence, customer ownership, caching, and service lifecycles.
+Store named cluster connections and use the live API. The package persists connections through a configurable Eloquent model, defaulting to `Proxmox\Models\Cluster` and `proxmox_clusters`. Let the consuming application own node/VM persistence, customer ownership, caching, and service lifecycles.
 
 ## Workflow
 
@@ -24,11 +24,13 @@ Store named cluster connections and use the live API. The package's only Eloquen
 - The installer publishes configuration and one migration for `proxmox_clusters`. `--migrate` runs all pending Laravel migrations. Rerun the installer to skip already published files.
 - The connection command prompts for an API URL including `/api2/json`, a token ID in `user@realm!token` form, and a hidden token secret. Optional flags: `--url`, `--token-id`, `--timeout`, `--connect-timeout`, `--ca-bundle`, and `--insecure`. There is no secret command-line option.
 - `Proxmox\Facades\Cluster` resolves API clients; `Proxmox\Models\Cluster` stores connection settings. Alias the model as `ClusterRecord` when importing both. API token secrets are encrypted with the application's key and hidden from model arrays and JSON. Validate application input before saving through Eloquent; the setup command validates its own inputs.
+- To customize cluster records, extend `Proxmox\Models\Cluster` in the application and set `'model' => App\Models\ProxmoxCluster::class` in `config/proxmox.php`. Connection lookup, cluster creation and duplicate checks, and the `about` listing use this class. Keep inherited credential casts, hidden fields, and connection settings; use the custom class for application queries. Rebuild cached configuration after changing the option.
+- The inherited table is `proxmox_clusters`. Applications overriding the table or database connection supply their own matching migrations; the package still publishes the default cluster migration. Invalid model classes raise `InvalidConfigurationException`.
 - Keep TLS verification enabled. `ca_bundle` accepts a certificate file path or PEM contents; the command stores a supplied file's contents. Inline PEM certificates require cURL support for `CURLOPT_CAINFO_BLOB`.
 - The default stored connection name comes from `PROXMOX_CONNECTION` / `proxmox.default`, initially `default`. There are no package modes or configured connection lists.
 - Every `Cluster::connection($name)` call reads stored settings and builds a fresh client. Bulk updates, renames, and deletions are reflected on subsequent lookups without cache invalidation or model listeners. Existing client variables retain their original settings. Container injection of `Proxmox\Proxmox` also resolves a fresh default client.
 - `Cluster::connectUsing($name, $settings)` returns a standalone client without saving a database record or registering its name. Use the returned client directly; `connection($name)` still resolves stored clusters. HTTP settings include `timeout`, `connect_timeout`, `verify_ssl`, `ca_bundle`, and `retry` (`times`, `sleep`). GET retries apply only to connection failures; writes are not retried automatically.
-- Query `ClusterRecord` to list stored connections. The package maintains no connection registry in memory.
+- Query the configured cluster model to list stored connections. The package maintains no connection registry in memory.
 
 ### 2. Fetch live data
 
@@ -48,7 +50,7 @@ $config = $vm->config();
 - `node($name)` and `virtualMachine($id)` select contexts without HTTP calls. A node is identified by its Proxmox name, not a local database ID. VMIDs are integers or integer strings from 100 to 999999999.
 - `Node` and `VirtualMachine` are live API resources, separate from Eloquent. VM snapshots start empty. `status()` fetches without updating the snapshot; `refresh()` updates it in memory. `toArray()` and JSON expose the snapshot without further requests or database writes. Associative response keys are sorted recursively; list order and field values are preserved.
 - Node methods include `status()`, `resources()`, `storages('images')`, and `images($storage)`.
-- VM methods include `osInfo()`, `networkInfo()`, `username()`, `startup()`, `usage()`, `allocatedResources()`, and `availableResources()`. `cpuHistory()`, `memoryHistory()`, `networkHistory()`, and `diskHistory()` fetch individual history series; `usageHistory()` fetches all four in one request. Guest information requires the QEMU agent; unavailable agent data can be null. Permission errors still throw.
+- VM methods include `networkInfo()`, `username()`, `startup()`, `usage()`, `allocatedResources()`, and `availableResources()`. `cpuHistory()`, `memoryHistory()`, `networkHistory()`, and `diskHistory()` fetch individual history series; `usageHistory()` fetches all four in one request. Guest network and filesystem information requires the QEMU agent; unavailable agent data can be null. `username()` reads configuration and `startup()` reads status without requiring the agent. Permission errors still throw.
 - Memory uses MiB and disks use GiB in categorized summaries and management methods. VM available resources concern its own allocation; node/storage capacity is administrator data.
 - Applications choose their own models, migrations, caching, and authorization. Retain a connection name, VMID, and current node for routing; update node placement when VMs move and use an application record ID for each service lifecycle. Cache returned arrays rather than connection or resource objects.
 
@@ -89,7 +91,7 @@ $vm->growDisk('scsi0', 10)->wait();
 ## References
 
 - `README.md` for install, connection settings, creation parameters, management, testing, and upgrade guidance.
-- `config/proxmox.php` for the default stored connection name.
+- `config/proxmox.php` for the default stored connection name and configurable cluster model class.
 - `src/Models/Cluster.php` for stored connection settings.
 - `src/Facades/Cluster.php` for the public facade.
 - `src/Resources/Nodes/Node.php` for live node selection, listings, and VM creation.
