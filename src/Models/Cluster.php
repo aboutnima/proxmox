@@ -26,7 +26,7 @@ use Illuminate\Support\Carbon;
  */
 class Cluster extends Model
 {
-    protected $table = 'proxmox_clusters';
+    protected $table = 'proxmox_cluster';
 
     protected $fillable = [
         'name',
