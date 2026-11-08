@@ -13,3 +13,7 @@ arch('it will not use dd(), ddd(), env(), or exit()')
 arch('the package source declares strict types')
     ->expect('Proxmox')
     ->toUseStrictTypes();
+
+arch('live API resources and helpers stay independent of database models')
+    ->expect(['Proxmox\Resources', 'Proxmox\Support'])
+    ->not->toUse(['Illuminate\Database', 'Proxmox\Models']);
