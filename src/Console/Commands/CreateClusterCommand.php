@@ -6,8 +6,7 @@ namespace Proxmox\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
-use Illuminate\Support\Fluent;
-use Proxmox\Inventory;
+use Proxmox\Models\Cluster;
 
 use function Laravel\Prompts\password;
 use function Laravel\Prompts\text;
@@ -15,34 +14,23 @@ use function Laravel\Prompts\text;
 class CreateClusterCommand extends Command
 {
     protected $signature = 'proxmox:create-cluster
-        {name? : A unique cluster name, used with Proxmox::connection($name)}
-        {--from-env : Copy the settings of a connection configured in .env and config/proxmox.php}
-        {--connection= : The connection to copy with --from-env (defaults to the cluster name)}
+        {name? : A unique cluster name, used with Cluster::connection($name)}
         {--url= : The Proxmox API URL, including /api2/json}
         {--token-id= : The API token ID, such as laravel@pve!app}
         {--timeout=30 : Seconds allowed for each request}
         {--connect-timeout=10 : Seconds allowed to open the connection}
         {--ca-bundle= : Path to a CA certificate file to store with the cluster}
-        {--insecure : Disable TLS certificate verification}
-        {--inactive : Create the cluster as inactive}';
+        {--insecure : Disable TLS certificate verification}';
 
-    protected $description = 'Add a Proxmox cluster to the inventory';
+    protected $description = 'Store a named Proxmox cluster connection';
 
     public function handle(Filesystem $files): int
     {
-        if (! Inventory::enabled()) {
-            $this->components->error('Clusters are stored in inventory mode only. Run: php artisan proxmox:install --mode=inventory');
-
-            return self::FAILURE;
-        }
-
-        $model = Inventory::clusterModel();
-
         $name = $this->stringInput($this->argument('name')) ?? text(
             label: 'Cluster name',
             placeholder: 'default',
             required: true,
-            hint: 'Used with Proxmox::connection($name).',
+            hint: 'Used with Cluster::connection($name).',
         );
 
         if (preg_match('/^[A-Za-z0-9_-]{1,100}$/', $name) !== 1) {
@@ -51,66 +39,30 @@ class CreateClusterCommand extends Command
             return self::FAILURE;
         }
 
-        if ($model::query()->where('name', $name)->exists()) {
+        if (Cluster::query()->where('name', $name)->exists()) {
             $this->components->error("Cluster [{$name}] already exists.");
 
             return self::FAILURE;
         }
 
-        $attributes = $this->option('from-env')
-            ? $this->attributesFromEnv($files, $name)
-            : $this->attributesFromInput($files);
+        $attributes = $this->attributesFromInput($files);
 
         if ($attributes === null) {
             return self::FAILURE;
         }
 
-        $model::query()->create([
+        Cluster::query()->create([
             'name' => $name,
             ...$attributes,
-            'is_active' => ! $this->option('inactive'),
         ]);
 
         $this->components->info("Cluster [{$name}] created.");
-
-        if ($this->option('from-env')) {
-            $this->components->warn('Remove the copied API token secret from your .env file; inventory mode reads it from the database.');
-        }
 
         if ($attributes['verify_ssl'] === false) {
             $this->components->warn('TLS certificate verification is disabled for this cluster. Prefer --ca-bundle with the Proxmox CA (/etc/pve/pve-root-ca.pem).');
         }
 
         return self::SUCCESS;
-    }
-
-    /**
-     * @return array<string, mixed>|null
-     */
-    protected function attributesFromEnv(Filesystem $files, string $name): ?array
-    {
-        $connection = $this->stringInput($this->option('connection')) ?? $name;
-        $config = config("proxmox.connections.{$connection}");
-
-        if (! is_array($config)) {
-            $this->components->error("Connection [{$connection}] is not configured in proxmox.connections.");
-
-            return null;
-        }
-
-        $config = new Fluent($config);
-        $caBundle = $config->string('ca_bundle')->trim()->value();
-
-        return $this->validated($files, [
-            'url' => $config->string('url')->trim()->value(),
-            'api_token_id' => $config->string('api_token_id')->trim()->value(),
-            'api_token_secret' => $config->string('api_token_secret')->trim()->value(),
-            'timeout' => $config->integer('timeout', 30),
-            'connect_timeout' => $config->integer('connect_timeout', 10),
-            'verify_ssl' => $config->boolean('verify_ssl', true),
-            'retry_times' => max(0, $config->integer('retry.times')),
-            'retry_sleep' => max(0, $config->integer('retry.sleep', 100)),
-        ], $caBundle === '' ? null : $caBundle);
     }
 
     /**

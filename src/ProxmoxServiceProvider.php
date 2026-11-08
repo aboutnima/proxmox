@@ -11,7 +11,7 @@ use Illuminate\Http\Client\Factory;
 use Illuminate\Support\ServiceProvider;
 use Proxmox\Console\Commands\CreateClusterCommand;
 use Proxmox\Console\Commands\InstallCommand;
-use Proxmox\Console\Commands\SyncNodesCommand;
+use Proxmox\Models\Cluster;
 use Throwable;
 
 class ProxmoxServiceProvider extends ServiceProvider
@@ -51,12 +51,10 @@ class ProxmoxServiceProvider extends ServiceProvider
         $this->commands([
             InstallCommand::class,
             CreateClusterCommand::class,
-            SyncNodesCommand::class,
         ]);
 
         if (class_exists(AboutCommand::class)) {
             AboutCommand::add('Proxmox', fn (): array => [
-                'Mode' => config('proxmox.mode'),
                 'Default connection' => $this->app->make(ProxmoxManager::class)->getDefaultConnection(),
                 'Connections' => $this->connectionNames(),
             ]);
@@ -68,14 +66,10 @@ class ProxmoxServiceProvider extends ServiceProvider
      */
     protected function connectionNames(): string
     {
-        if (! Inventory::enabled()) {
-            return implode(', ', array_keys((array) config('proxmox.connections', [])));
-        }
-
         try {
-            return Inventory::clusterModel()::query()->orderBy('name')->pluck('name')->implode(', ');
+            return Cluster::query()->orderBy('name')->pluck('name')->implode(', ');
         } catch (Throwable) {
-            return 'Unavailable (run the inventory migrations)';
+            return 'Unavailable (run the cluster migration)';
         }
     }
 }

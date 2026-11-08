@@ -8,7 +8,6 @@ use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Proxmox\Concerns\HasVirtualMachines;
 use Workbench\Database\Factories\UserFactory;
 
 #[Fillable(['name', 'email', 'password'])]
@@ -16,7 +15,7 @@ use Workbench\Database\Factories\UserFactory;
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, HasVirtualMachines, Notifiable;
+    use HasFactory, Notifiable;
 
     /**
      * Get the attributes that should be cast.

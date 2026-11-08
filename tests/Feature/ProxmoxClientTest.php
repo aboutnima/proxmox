@@ -4,16 +4,16 @@ declare(strict_types=1);
 
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
-use Proxmox\Facades\Proxmox as ProxmoxFacade;
+use Proxmox\Facades\Cluster;
 use Proxmox\Proxmox;
 
 beforeEach(function () {
-    config()->set([
-        'proxmox.connections.default.url' => 'https://proxmox.example.test:8006/api2/json',
-        'proxmox.connections.default.api_token_id' => 'laravel@pam!package',
-        'proxmox.connections.default.api_token_secret' => 'token-secret',
-        'proxmox.connections.default.timeout' => 15,
-        'proxmox.connections.default.verify_ssl' => true,
+    Cluster::connectUsing('default', [
+        'url' => 'https://proxmox.example.test:8006/api2/json',
+        'api_token_id' => 'laravel@pam!package',
+        'api_token_secret' => 'token-secret',
+        'timeout' => 15,
+        'verify_ssl' => true,
     ]);
 
     Http::fake([
@@ -23,7 +23,7 @@ beforeEach(function () {
 });
 
 it('sends authenticated GET requests to the configured API URL', function () {
-    $response = ProxmoxFacade::get('/nodes', ['type' => 'qemu']);
+    $response = Cluster::get('/nodes', ['type' => 'qemu']);
 
     expect($response->json('data'))->toBe([['node' => 'pve1']]);
 
@@ -34,7 +34,7 @@ it('sends authenticated GET requests to the configured API URL', function () {
 });
 
 it('gets the available nodes', function () {
-    $nodes = ProxmoxFacade::nodes();
+    $nodes = Cluster::nodes();
 
     expect($nodes)->toBeArray()->toBe([['node' => 'pve1']]);
 
@@ -43,7 +43,7 @@ it('gets the available nodes', function () {
 });
 
 it('gets QEMU virtual machines for a node', function () {
-    $vms = ProxmoxFacade::node('my')->virtualMachines()->all();
+    $vms = Cluster::node('my')->virtualMachines();
 
     expect($vms)->toBeArray()->toBe([['status' => 'running', 'vmid' => 101]]);
 
@@ -53,7 +53,7 @@ it('gets QEMU virtual machines for a node', function () {
 
 it('rejects invalid node names when listing virtual machines', function () {
     foreach (['', '../other', 'my/node'] as $node) {
-        expect(fn () => ProxmoxFacade::node($node)->virtualMachines()->all())
+        expect(fn () => Cluster::node($node)->virtualMachines())
             ->toThrow(InvalidArgumentException::class, 'node');
     }
 
@@ -115,28 +115,28 @@ it('uses form encoding for generic requests with form parameters', function () {
 });
 
 it('fails clearly when the API URL is missing', function () {
-    config()->set('proxmox.connections.default.url', '');
+    Cluster::connectUsing('default', ['url' => '']);
 
     expect(fn () => app(Proxmox::class)->get('/nodes'))
-        ->toThrow(LogicException::class, 'PROXMOX_URL');
+        ->toThrow(LogicException::class, 'URL');
 
     Http::assertNothingSent();
 });
 
 it('fails clearly when required API configuration is missing', function () {
-    config()->set('proxmox.connections.default.api_token_secret', '');
+    Cluster::connectUsing('default', ['url' => 'https://proxmox.example.test:8006/api2/json']);
 
     expect(fn () => app(Proxmox::class)->get('/nodes'))
-        ->toThrow(LogicException::class, 'PROXMOX_API_TOKEN_SECRET');
+        ->toThrow(LogicException::class, 'api_token_secret');
 
     Http::assertNothingSent();
 });
 
 it('requires a positive request timeout', function () {
-    config()->set('proxmox.connections.default.timeout', 0);
+    Cluster::connectUsing('default', ['url' => 'https://proxmox.example.test:8006/api2/json', 'api_token_id' => 'a@pve!b', 'api_token_secret' => 'test-only', 'timeout' => 0]);
 
     expect(fn () => app(Proxmox::class)->get('/nodes'))
-        ->toThrow(LogicException::class, 'PROXMOX_TIMEOUT');
+        ->toThrow(LogicException::class, 'timeout');
 
     Http::assertNothingSent();
 });

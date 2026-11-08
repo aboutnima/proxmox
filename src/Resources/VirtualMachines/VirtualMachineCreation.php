@@ -18,9 +18,11 @@ use Proxmox\Support\Identifier;
 use Proxmox\Support\ResponseData;
 
 /**
- * QEMU VM listing and creation operations on a single node.
+ * QEMU creation and cloud-image import on a single node.
+ *
+ * @internal
  */
-readonly class VirtualMachines
+readonly class VirtualMachineCreation
 {
     public string $node;
 
@@ -33,60 +35,12 @@ readonly class VirtualMachines
     }
 
     /**
-     * Fetch the VM listing as an array.
-     *
-     * @return list<array<array-key, mixed>>
-     *
-     * @throws ConnectionException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws UnexpectedResponseException
-     */
-    public function all(): array
-    {
-        return ResponseData::list($this->client->get('nodes/'.rawurlencode($this->node).'/qemu'));
-    }
-
-    /**
      * Create a VM using readable fields or native API parameters.
      *
      * Memory is in MiB and disk is in GiB. Additional native QEMU keys are
      * passed through. With image and disk, await import and return the resize task.
      *
-     * @param  array{
-     *     vmid: int|string,
-     *     name?: string,
-     *     sockets?: int,
-     *     cores?: int,
-     *     memory?: int,
-     *     disk?: int,
-     *     storage?: string,
-     *     image?: string,
-     *     bridge?: string,
-     *     ip?: string,
-     *     prefix?: int,
-     *     gateway?: string,
-     *     user?: string,
-     *     password?: string,
-     *     ssh_key?: string,
-     *     start?: bool|int,
-     *     ostype?: string,
-     *     onboot?: bool|int,
-     *     boot?: string,
-     *     scsihw?: string,
-     *     scsi0?: string,
-     *     net0?: string,
-     *     ide2?: string,
-     *     ipconfig0?: string,
-     *     ciuser?: string,
-     *     cipassword?: string,
-     *     sshkeys?: string,
-     *     serial0?: string,
-     *     vga?: string,
-     *     ...
-     * }  $configuration
-     *
-     * @phpstan-param array<string, mixed> $configuration Values are validated at runtime.
+     * @param  array<string, mixed>  $configuration
      *
      * @throws ConnectionException
      * @throws InvalidArgumentException

@@ -8,15 +8,20 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use InvalidArgumentException;
 use Proxmox\Exceptions\InvalidConfigurationException;
+use Proxmox\Exceptions\TaskFailedException;
+use Proxmox\Exceptions\TaskTimeoutException;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Proxmox;
 use Proxmox\Resources\Tasks\Task;
-use Proxmox\Resources\VirtualMachines\VirtualMachineResource;
-use Proxmox\Resources\VirtualMachines\VirtualMachines;
+use Proxmox\Resources\VirtualMachines\VirtualMachine;
+use Proxmox\Resources\VirtualMachines\VirtualMachineCreation;
 use Proxmox\Support\Identifier;
 use Proxmox\Support\ResourceData;
 use Proxmox\Support\ResponseData;
 
+/**
+ * A live node API context, selected by its Proxmox name without fetching data.
+ */
 readonly class Node
 {
     public string $name;
@@ -65,7 +70,7 @@ readonly class Node
         $allocatedCpus = 0;
         $allocatedMemory = 0;
 
-        foreach ($this->virtualMachines()->all() as $vm) {
+        foreach ($this->virtualMachines() as $vm) {
             if (ResourceData::integer($vm['template'] ?? 0) === 1) {
                 continue;
             }
@@ -134,11 +139,70 @@ readonly class Node
     }
 
     /**
-     * Access VM listing and creation operations without sending a request.
+     * Fetch the node's QEMU virtual machines as plain API data.
+     *
+     * @return list<array<array-key, mixed>>
+     *
+     * @throws ConnectionException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws UnexpectedResponseException
      */
-    public function virtualMachines(): VirtualMachines
+    public function virtualMachines(): array
     {
-        return new VirtualMachines($this->client, $this->name);
+        return ResponseData::list($this->client->get('nodes/'.rawurlencode($this->name).'/qemu'));
+    }
+
+    /**
+     * Create a VM using readable fields or native Proxmox parameters.
+     * Memory is in MiB and disk size is in GiB.
+     *
+     * @param  array{
+     *     vmid: int|string,
+     *     name?: string,
+     *     sockets?: int,
+     *     cores?: int,
+     *     memory?: int,
+     *     disk?: int,
+     *     storage?: string,
+     *     image?: string,
+     *     bridge?: string,
+     *     ip?: string,
+     *     prefix?: int,
+     *     gateway?: string,
+     *     user?: string,
+     *     password?: string,
+     *     ssh_key?: string,
+     *     start?: bool|int,
+     *     ostype?: string,
+     *     onboot?: bool|int,
+     *     boot?: string,
+     *     scsihw?: string,
+     *     scsi0?: string,
+     *     net0?: string,
+     *     ide2?: string,
+     *     ipconfig0?: string,
+     *     ciuser?: string,
+     *     cipassword?: string,
+     *     sshkeys?: string,
+     *     serial0?: string,
+     *     vga?: string,
+     *     ...
+     * }  $configuration
+     *
+     * @phpstan-param array<string, mixed> $configuration
+     *
+     * @throws ConnectionException
+     * @throws InvalidArgumentException
+     * @throws InvalidConfigurationException
+     * @throws RequestException
+     * @throws TaskFailedException
+     * @throws TaskTimeoutException
+     * @throws UnexpectedResponseException
+     */
+    public function createVirtualMachine(array $configuration, int $importTimeout = 300): Task
+    {
+        return (new VirtualMachineCreation($this->client, $this->name))->create($configuration, $importTimeout);
     }
 
     /**
@@ -146,9 +210,9 @@ readonly class Node
      *
      * @throws InvalidArgumentException
      */
-    public function virtualMachine(int|string $vmid): VirtualMachineResource
+    public function virtualMachine(int|string $vmid): VirtualMachine
     {
-        return new VirtualMachineResource($this->client, $this->name, $vmid);
+        return new VirtualMachine($this->client, $this->name, $vmid);
     }
 
     /**

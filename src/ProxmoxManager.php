@@ -8,10 +8,10 @@ use Illuminate\Contracts\Config\Repository;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Support\Traits\ForwardsCalls;
 use Proxmox\Exceptions\InvalidConfigurationException;
+use Proxmox\Models\Cluster;
 
 /**
- * Resolves and caches one Proxmox client per connection: from config in api
- * mode, or from the proxmox_clusters table in inventory mode.
+ * Resolves and caches API clients from stored cluster connections.
  *
  * @mixin Proxmox
  */
@@ -62,7 +62,7 @@ class ProxmoxManager
     }
 
     /**
-     * Forget a resolved connection so it is rebuilt from config on next use.
+     * Forget a resolved connection so it is rebuilt from the database on next use.
      */
     public function purge(?string $name = null): void
     {
@@ -92,22 +92,12 @@ class ProxmoxManager
      */
     protected function resolve(string $name): Proxmox
     {
-        if (Inventory::enabled()) {
-            $cluster = Inventory::clusterModel()::query()->where('name', $name)->first();
+        $cluster = Cluster::query()->where('name', $name)->first();
 
-            if ($cluster === null) {
-                throw InvalidConfigurationException::clusterNotFound($name);
-            }
-
-            return Proxmox::fromConfig($this->http, $cluster->toConnectionConfig(), $name);
+        if ($cluster === null) {
+            throw InvalidConfigurationException::clusterNotFound($name);
         }
 
-        $config = $this->config->get("proxmox.connections.{$name}");
-
-        if (! is_array($config)) {
-            throw InvalidConfigurationException::connectionNotConfigured($name);
-        }
-
-        return Proxmox::fromConfig($this->http, $config, $name);
+        return Proxmox::fromConfig($this->http, $cluster->toConnectionConfig(), $name);
     }
 }

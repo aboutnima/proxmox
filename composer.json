@@ -94,7 +94,7 @@
                 "Proxmox\\ProxmoxServiceProvider"
             ],
             "aliases": {
-                "Proxmox": "Proxmox\\Facades\\Proxmox"
+                "Cluster": "Proxmox\\Facades\\Cluster"
             }
         }
     },

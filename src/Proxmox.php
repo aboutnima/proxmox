@@ -53,7 +53,7 @@ readonly class Proxmox
     }
 
     /**
-     * Create a client from a "proxmox.connections.*" configuration array.
+     * Create a client from connection settings, such as a stored cluster's settings.
      *
      * @param  array<array-key, mixed>  $config
      */

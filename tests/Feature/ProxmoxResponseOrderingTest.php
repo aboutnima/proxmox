@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\Http;
-use Proxmox\Facades\Proxmox;
+use Proxmox\Facades\Cluster;
 
 beforeEach(function () {
-    config()->set([
-        'proxmox.connections.default.url' => 'https://proxmox.example.test:8006/api2/json',
-        'proxmox.connections.default.api_token_id' => 'laravel@pam!package',
-        'proxmox.connections.default.api_token_secret' => 'token-secret',
+    Cluster::connectUsing('default', [
+        'url' => 'https://proxmox.example.test:8006/api2/json',
+        'api_token_id' => 'laravel@pam!package',
+        'api_token_secret' => 'token-secret',
     ]);
 
     Http::preventStrayRequests();
@@ -48,7 +48,7 @@ it('keeps VM status snapshot and JSON keys stable across differently ordered res
         ->push(['data' => ['vmid' => 100, 'cpu' => 0.25, 'status' => 'stopped']]),
     ]);
 
-    $vm = Proxmox::node('my')->virtualMachine(100)->refresh();
+    $vm = Cluster::node('my')->virtualMachine(100)->refresh();
 
     expect($vm->toArray())->toBe($expected)
         ->and($vm->status())->toBe($expected)
@@ -77,10 +77,10 @@ it('keeps VM listing keys stable without reordering VMs or nested list values', 
         ->push(['data' => $expected]),
     ]);
 
-    $vms = Proxmox::node('my')->virtualMachines();
+    $node = Cluster::node('my');
 
-    expect($vms->all())->toBe($expected)
-        ->and($vms->all())->toBe($expected);
+    expect($node->virtualMachines())->toBe($expected)
+        ->and($node->virtualMachines())->toBe($expected);
 
     Http::assertSentCount(2);
 });
@@ -95,7 +95,7 @@ it('keeps VM configuration keys stable across differently ordered responses', fu
             ->push(['data' => $expected]),
     ]);
 
-    $vm = Proxmox::node('my')->virtualMachine(100);
+    $vm = Cluster::node('my')->virtualMachine(100);
 
     expect($vm->config())->toBe($expected)
         ->and($vm->config())->toBe($expected);

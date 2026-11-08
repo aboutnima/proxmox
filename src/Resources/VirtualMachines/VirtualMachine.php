@@ -11,7 +11,6 @@ use InvalidArgumentException;
 use JsonSerializable;
 use Proxmox\Exceptions\InvalidConfigurationException;
 use Proxmox\Exceptions\UnexpectedResponseException;
-use Proxmox\Models\VirtualMachine as VirtualMachineModel;
 use Proxmox\Proxmox;
 use Proxmox\Resources\Tasks\Task;
 use Proxmox\Support\Identifier;
@@ -19,11 +18,9 @@ use Proxmox\Support\ResourceData;
 use Proxmox\Support\ResponseData;
 
 /**
- * A VM's fetched runtime data and node-scoped management operations.
+ * A live VM API resource with an optional in-memory status snapshot.
  *
  * @implements Arrayable<array-key, mixed>
- *
- * @phpstan-consistent-constructor
  */
 class VirtualMachine implements Arrayable, JsonSerializable
 {
@@ -34,7 +31,7 @@ class VirtualMachine implements Arrayable, JsonSerializable
     /**
      * @var array<array-key, mixed>
      */
-    private array $attributes = [];
+    private array $snapshot = [];
 
     /**
      * @throws InvalidArgumentException
@@ -46,29 +43,7 @@ class VirtualMachine implements Arrayable, JsonSerializable
     }
 
     /**
-     * Select an inventory VM without fetching runtime data or changing its record.
-     *
-     * @throws InvalidArgumentException
-     * @throws InvalidConfigurationException
-     */
-    public static function make(VirtualMachineModel $record): static
-    {
-        if (! $record->exists || $record->trashed()) {
-            throw new InvalidArgumentException('Pass a saved, non-deleted virtual machine inventory record.');
-        }
-
-        $node = $record->node
-            ?? throw new InvalidConfigurationException("Virtual machine [{$record->vmid}] has no node in the inventory.");
-
-        if ($node->cluster_id !== $record->cluster_id) {
-            throw new InvalidConfigurationException("Node [{$node->name}] does not belong to cluster [{$record->cluster_id}].");
-        }
-
-        return new static($node->cluster->client(), $node->name, $record->vmid);
-    }
-
-    /**
-     * Fetch the current runtime status without changing the stored data.
+     * Fetch the current runtime status without changing the in-memory snapshot.
      *
      * @return array<array-key, mixed>
      *
@@ -171,7 +146,7 @@ class VirtualMachine implements Arrayable, JsonSerializable
     }
 
     /**
-     * Replace the stored data with the latest runtime status.
+     * Replace the in-memory snapshot with the latest runtime status.
      *
      * @throws ConnectionException
      * @throws InvalidConfigurationException
@@ -180,19 +155,19 @@ class VirtualMachine implements Arrayable, JsonSerializable
      */
     public function refresh(): static
     {
-        $this->attributes = $this->status();
+        $this->snapshot = $this->status();
 
         return $this;
     }
 
     /**
-     * Return the stored runtime data without sending a request.
+     * Return the in-memory status snapshot without sending a request.
      *
      * @return array<array-key, mixed>
      */
     public function toArray(): array
     {
-        return $this->attributes;
+        return $this->snapshot;
     }
 
     /**

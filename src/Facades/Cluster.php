@@ -6,6 +6,7 @@ namespace Proxmox\Facades;
 
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Facade;
+use Proxmox\Proxmox;
 use Proxmox\ProxmoxManager;
 use Proxmox\Resources\Nodes\Node;
 use Proxmox\Resources\Tasks\Task;
@@ -29,9 +30,9 @@ use Proxmox\Resources\Tasks\Task;
  * @method static int nextVirtualMachineId()
  *
  * @see ProxmoxManager
- * @see \Proxmox\Proxmox
+ * @see Proxmox
  */
-class Proxmox extends Facade
+class Cluster extends Facade
 {
     protected static function getFacadeAccessor(): string
     {
