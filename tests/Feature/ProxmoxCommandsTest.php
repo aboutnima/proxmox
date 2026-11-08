@@ -16,7 +16,7 @@ beforeEach(function () {
     app()->useConfigPath($this->envPath.'/config');
     app()->useDatabasePath($this->envPath.'/database');
 
-    $this->publishedMigrations = fn (): array => glob(database_path('migrations/*_create_proxmox_tables.php')) ?: [];
+    $this->publishedMigrations = fn (): array => glob(database_path('migrations/*.php')) ?: [];
 });
 
 afterEach(function () {
@@ -31,9 +31,9 @@ describe('proxmox:install', function () {
         $this->artisan('proxmox:install', ['--no-interaction' => true])->assertSuccessful();
 
         expect(config_path('proxmox.php'))->toBeFile()
-            ->and(($this->publishedMigrations)())->toHaveCount(1)
+            ->and(($this->publishedMigrations)())->toHaveCount(2)
             ->and(file_get_contents($this->envPath.'/.env'))->toBe($environment)
-            ->and(Schema::hasTable('proxmox_clusters'))->toBeFalse();
+            ->and(Schema::hasTable('proxmox_cluster'))->toBeFalse();
     });
 
     it('preserves published configuration and does not duplicate migrations', function () {
@@ -50,7 +50,8 @@ describe('proxmox:install', function () {
     it('can run the published migration when requested', function () {
         $this->artisan('proxmox:install', ['--migrate' => true, '--no-interaction' => true])->assertSuccessful();
 
-        expect(Schema::hasTable('proxmox_clusters'))->toBeTrue()
+        expect(Schema::hasTable('proxmox_cluster'))->toBeTrue()
+            ->and(Schema::hasTable('proxmox_clusters'))->toBeFalse()
             ->and(Schema::hasTable('proxmox_nodes'))->toBeFalse()
             ->and(Schema::hasTable('proxmox_virtual_machines'))->toBeFalse();
     });
@@ -83,7 +84,7 @@ describe('proxmox:create-cluster', function () {
         expect($cluster->name)->toBe('hetzner')
             ->and($cluster->api_token_secret)->toBe('typed-secret')
             ->and($cluster->verify_ssl)->toBeTrue()
-            ->and(DB::table('proxmox_clusters')->value('api_token_secret'))->not->toBe('typed-secret');
+            ->and(DB::table('proxmox_cluster')->value('api_token_secret'))->not->toBe('typed-secret');
     });
 
     it('stores a CA certificate file as connection settings', function () {

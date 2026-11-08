@@ -13,7 +13,7 @@ use Proxmox\Tests\Fixtures\CustomCluster;
 
 beforeEach(function () {
     $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
-    Schema::rename('proxmox_clusters', 'custom_proxmox_clusters');
+    Schema::rename('proxmox_cluster', 'custom_proxmox_clusters');
     config()->set('proxmox.model', CustomCluster::class);
 
     $this->attributes = [

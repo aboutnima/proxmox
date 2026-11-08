@@ -22,7 +22,7 @@ beforeEach(function () {
 });
 
 it('encrypts stored API token secrets and hides them from serialization', function () {
-    $stored = DB::table('proxmox_clusters')->value('api_token_secret');
+    $stored = DB::table('proxmox_cluster')->value('api_token_secret');
 
     expect($stored)->not->toBe('cluster-secret')
         ->and(decrypt($stored, false))->toBe('cluster-secret')
