@@ -6,6 +6,8 @@ namespace Proxmox\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
+use Proxmox\Proxmox;
+use Proxmox\ProxmoxManager;
 
 /**
  * A named Proxmox connection. Nodes and VMs are fetched through the API.
@@ -64,6 +66,14 @@ class Cluster extends Model
             'retry_times' => 'integer',
             'retry_sleep' => 'integer',
         ];
+    }
+
+    /**
+     * Build a fresh API client from this record's current attributes.
+     */
+    public function client(): Proxmox
+    {
+        return app(ProxmoxManager::class)->connectUsing($this->name, $this->toConnectionConfig());
     }
 
     /**

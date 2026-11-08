@@ -30,15 +30,19 @@ afterEach(function () {
     Schema::dropIfExists('custom_proxmox_clusters');
 });
 
-it('resolves connections through the configured cluster model', function () {
-    CustomCluster::query()->create($this->attributes);
+it('resolves connections through the configured cluster model', function (bool $fromModel) {
+    $cluster = CustomCluster::query()->create($this->attributes);
     Http::fake(['*' => Http::response(['data' => [['node' => 'pve1']]])]);
 
-    expect(ProxmoxCluster::connection('hetzner')->nodes())->toBe([['node' => 'pve1']]);
+    $client = $fromModel
+        ? CustomCluster::findOrFail($cluster->id)->client()
+        : ProxmoxCluster::connection('hetzner');
+
+    expect($client->nodes())->toBe([['node' => 'pve1']]);
 
     Http::assertSent(fn (Request $request): bool => $request->url() === 'https://custom.example.test:8006/api2/json/nodes'
         && $request->hasHeader('Authorization', 'PVEAPIToken=laravel@pve!custom=custom-secret'));
-});
+})->with(['facade' => [false], 'model' => [true]]);
 
 it('creates and checks duplicate connections through the configured model', function () {
     $this->artisan('proxmox:create-cluster', [
