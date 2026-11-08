@@ -38,7 +38,7 @@ it('reads live nodes and virtual machines through a stored cluster connection', 
 });
 
 it('installs only the cluster connection registry', function () {
-    expect(Schema::hasTable('proxmox_cluster'))->toBeTrue()
+    expect(Schema::hasTable('clusters'))->toBeTrue()
         ->and(Schema::hasTable('proxmox_nodes'))->toBeFalse()
         ->and(Schema::hasTable('proxmox_virtual_machines'))->toBeFalse();
 });

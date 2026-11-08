@@ -40,7 +40,7 @@ it('merges the minimal package configuration', function () {
 });
 
 it('boots without running migrations or requiring a stored connection', function () {
-    expect(Schema::hasTable('proxmox_cluster'))->toBeFalse();
+    expect(Schema::hasTable('clusters'))->toBeFalse();
 
     $this->artisan('about', ['--only' => 'proxmox'])
         ->expectsOutputToContain('Unavailable (run the cluster migration)')
