@@ -8,13 +8,17 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Facades\Cluster;
+use Proxmox\Models\Cluster as ClusterRecord;
 use Proxmox\Resources\VirtualMachines\VirtualMachine;
 
 const USAGE_MIB = 1024 ** 2;
 const USAGE_GIB = 1024 ** 3;
 
 beforeEach(function () {
-    Cluster::connectUsing('default', [
+    $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
+
+    $this->cluster = ClusterRecord::query()->create([
+        'name' => 'default',
         'url' => 'https://proxmox.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pam!package',
         'api_token_secret' => 'token-secret',

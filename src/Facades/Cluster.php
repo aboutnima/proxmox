@@ -16,8 +16,6 @@ use Proxmox\Resources\Tasks\Task;
  * @method static \Proxmox\Proxmox connectUsing(string $name, array<string, mixed> $config)
  * @method static string getDefaultConnection()
  * @method static void setDefaultConnection(string $name)
- * @method static void purge(string|null $name = null)
- * @method static array<string, \Proxmox\Proxmox> getConnections()
  * @method static string getName()
  * @method static Response request(string $method, string $endpoint, array<string, mixed> $options = [])
  * @method static Response get(string $endpoint, array<string, mixed> $query = [])

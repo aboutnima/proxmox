@@ -46,7 +46,7 @@ it('applies connection defaults and preserves per-cluster TLS settings', functio
     ]);
 });
 
-it('rebuilds a cached connection after credentials are changed', function () {
+it('uses updated credentials when resolving the next connection', function () {
     $first = Cluster::connection();
     $this->cluster->update(['api_token_secret' => 'rotated-secret']);
     $second = Cluster::connection();
@@ -58,18 +58,17 @@ it('rebuilds a cached connection after credentials are changed', function () {
     Http::assertSent(fn ($request): bool => $request->hasHeader('Authorization', 'PVEAPIToken=laravel@pve!app=rotated-secret'));
 });
 
-it('invalidates both connection names when a cluster is renamed', function () {
+it('resolves renamed clusters without model event invalidation', function () {
     $first = Cluster::connection();
-    $this->cluster->update(['name' => 'hetzner']);
+    ClusterRecord::query()->whereKey($this->cluster->id)->update(['name' => 'hetzner']);
 
-    expect(Cluster::getConnections())->not->toHaveKey('default')
-        ->and(Cluster::connection('hetzner'))->not->toBe($first)
+    expect(Cluster::connection('hetzner'))->not->toBe($first)
         ->and(fn () => Cluster::connection('default'))->toThrow(InvalidConfigurationException::class);
 });
 
-it('forgets a cached cluster when its connection record is deleted', function () {
+it('rejects a deleted cluster even when deletion bypasses model events', function () {
     Cluster::connection();
-    $this->cluster->delete();
+    ClusterRecord::query()->whereKey($this->cluster->id)->delete();
 
     expect(fn () => Cluster::connection())->toThrow(InvalidConfigurationException::class, 'does not exist');
     Http::assertNothingSent();

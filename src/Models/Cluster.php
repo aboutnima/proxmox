@@ -6,7 +6,6 @@ namespace Proxmox\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
-use Proxmox\ProxmoxManager;
 
 /**
  * A named Proxmox connection. Nodes and VMs are fetched through the API.
@@ -65,20 +64,6 @@ class Cluster extends Model
             'retry_times' => 'integer',
             'retry_sleep' => 'integer',
         ];
-    }
-
-    protected static function booted(): void
-    {
-        static::saved(function (Cluster $cluster): void {
-            $manager = app(ProxmoxManager::class);
-            $manager->purge($cluster->name);
-
-            if ($cluster->wasChanged('name') && is_string($original = $cluster->getOriginal('name'))) {
-                $manager->purge($original);
-            }
-        });
-
-        static::deleted(fn (Cluster $cluster) => app(ProxmoxManager::class)->purge($cluster->name));
     }
 
     /**

@@ -35,14 +35,14 @@ beforeEach(function () {
     Http::preventStrayRequests();
 });
 
-it('resolves and caches named connections', function () {
+it('resolves a fresh client for every named connection lookup', function () {
     Http::fake(['*' => Http::response(['data' => [['node' => 'backup1']]])]);
 
     $backup = Cluster::connection('backup');
 
     expect($backup)->toBeInstanceOf(ProxmoxClient::class)
         ->and($backup->getName())->toBe('backup')
-        ->and(Cluster::connection('backup'))->toBe($backup)
+        ->and(Cluster::connection('backup'))->not->toBe($backup)
         ->and(Cluster::connection())->not->toBe($backup)
         ->and(collect($backup->nodes())->pluck('node')->all())->toBe(['backup1']);
 
@@ -57,20 +57,26 @@ it('forwards facade calls to the configured default connection', function () {
 
     expect(Cluster::getDefaultConnection())->toBe('backup')
         ->and(Cluster::getName())->toBe('backup')
-        ->and(app(ProxmoxClient::class))->toBe(Cluster::connection('backup'));
+        ->and(app(ProxmoxClient::class)->getName())->toBe('backup');
 
     Cluster::nodes();
 
     Http::assertSent(fn (Request $request): bool => str_starts_with($request->url(), 'https://backup.example.test'));
 });
 
-it('rebuilds a purged connection from the stored cluster', function () {
+it('reads stored changes made without model events on the next lookup', function () {
     $first = Cluster::connection();
 
-    Cluster::purge();
+    ClusterRecord::query()->whereKey($this->cluster->id)->update([
+        'url' => 'https://updated.example.test:8006/api2/json',
+    ]);
 
-    expect(Cluster::connection())->not->toBe($first)
-        ->and(Cluster::getConnections())->toHaveKey('default');
+    $second = Cluster::connection();
+    Http::fake(['*' => Http::response(['data' => []])]);
+    $second->nodes();
+
+    expect($second)->not->toBe($first);
+    Http::assertSent(fn (Request $request): bool => str_starts_with($request->url(), 'https://updated.example.test'));
 });
 
 it('fails clearly for clusters that are not registered', function () {
@@ -160,7 +166,7 @@ it('ignores the CA bundle when TLS verification is disabled', function () {
         ->and($options)->not->toHaveKey('curl');
 });
 
-it('builds runtime connections with connectUsing', function () {
+it('builds standalone runtime connections without registering them by name', function () {
     Http::fake(['*' => Http::response(['data' => []])]);
 
     $client = Cluster::connectUsing('runtime', [
@@ -169,11 +175,31 @@ it('builds runtime connections with connectUsing', function () {
         'api_token_secret' => 'runtime-secret',
     ]);
 
-    expect(Cluster::connection('runtime'))->toBe($client);
+    expect($client->getName())->toBe('runtime')
+        ->and(fn () => Cluster::connection('runtime'))->toThrow(InvalidConfigurationException::class, 'does not exist');
 
     $client->nodes();
 
     Http::assertSent(fn (Request $request): bool => str_starts_with($request->url(), 'https://runtime.example.test'));
+});
+
+it('keeps runtime settings separate from a stored cluster with the same name', function () {
+    $temporary = Cluster::connectUsing('default', [
+        'url' => 'https://runtime.example.test:8006/api2/json',
+        'api_token_id' => 'runtime@pve!app',
+        'api_token_secret' => 'runtime-secret',
+    ]);
+    $stored = Cluster::connection('default');
+
+    Http::fake(['*' => Http::response(['data' => []])]);
+    $temporary->nodes();
+    $stored->nodes();
+
+    Http::assertSentInOrder([
+        fn (Request $request): bool => str_starts_with($request->url(), 'https://runtime.example.test'),
+        fn (Request $request): bool => str_starts_with($request->url(), 'https://proxmox.example.test'),
+    ]);
+    expect(ClusterRecord::query()->count())->toBe(2);
 });
 
 it('keeps the API token secret out of debug output', function () {

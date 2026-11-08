@@ -11,18 +11,13 @@ use Proxmox\Exceptions\InvalidConfigurationException;
 use Proxmox\Models\Cluster;
 
 /**
- * Resolves and caches API clients from stored cluster connections.
+ * Builds fresh API clients from stored cluster connections.
  *
  * @mixin Proxmox
  */
 class ProxmoxManager
 {
     use ForwardsCalls;
-
-    /**
-     * @var array<string, Proxmox>
-     */
-    protected array $connections = [];
 
     public function __construct(
         protected Repository $config,
@@ -36,7 +31,7 @@ class ProxmoxManager
     {
         $name ??= $this->getDefaultConnection();
 
-        return $this->connections[$name] ??= $this->resolve($name);
+        return $this->resolve($name);
     }
 
     public function getDefaultConnection(): string
@@ -52,29 +47,13 @@ class ProxmoxManager
     }
 
     /**
-     * Build and cache a connection from a runtime configuration array.
+     * Build a standalone client from runtime settings without registering it.
      *
      * @param  array<array-key, mixed>  $config
      */
     public function connectUsing(string $name, array $config): Proxmox
     {
-        return $this->connections[$name] = Proxmox::fromConfig($this->http, $config, $name);
-    }
-
-    /**
-     * Forget a resolved connection so it is rebuilt from the database on next use.
-     */
-    public function purge(?string $name = null): void
-    {
-        unset($this->connections[$name ?? $this->getDefaultConnection()]);
-    }
-
-    /**
-     * @return array<string, Proxmox>
-     */
-    public function getConnections(): array
-    {
-        return $this->connections;
+        return Proxmox::fromConfig($this->http, $config, $name);
     }
 
     /**

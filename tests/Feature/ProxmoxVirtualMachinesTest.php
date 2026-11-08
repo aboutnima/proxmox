@@ -9,13 +9,17 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Sleep;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Facades\Cluster;
+use Proxmox\Models\Cluster as ClusterRecord;
 use Proxmox\Resources\Tasks\Task;
 use Proxmox\Resources\VirtualMachines\VirtualMachine;
 
 const API_URL = 'https://proxmox.example.test:8006/api2/json';
 
 beforeEach(function () {
-    Cluster::connectUsing('default', [
+    $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
+
+    $this->cluster = ClusterRecord::query()->create([
+        'name' => 'default',
         'url' => API_URL,
         'api_token_id' => 'laravel@pam!package',
         'api_token_secret' => 'token-secret',

@@ -5,9 +5,13 @@ declare(strict_types=1);
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Proxmox\Facades\Cluster;
+use Proxmox\Models\Cluster as ClusterRecord;
 
 beforeEach(function () {
-    Cluster::connectUsing('default', [
+    $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
+
+    $this->cluster = ClusterRecord::query()->create([
+        'name' => 'default',
         'url' => 'https://proxmox.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pam!package',
         'api_token_secret' => 'token-secret',

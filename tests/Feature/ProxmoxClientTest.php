@@ -5,10 +5,14 @@ declare(strict_types=1);
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Proxmox\Facades\Cluster;
+use Proxmox\Models\Cluster as ClusterRecord;
 use Proxmox\Proxmox;
 
 beforeEach(function () {
-    Cluster::connectUsing('default', [
+    $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
+
+    $this->cluster = ClusterRecord::query()->create([
+        'name' => 'default',
         'url' => 'https://proxmox.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pam!package',
         'api_token_secret' => 'token-secret',
@@ -115,7 +119,7 @@ it('uses form encoding for generic requests with form parameters', function () {
 });
 
 it('fails clearly when the API URL is missing', function () {
-    Cluster::connectUsing('default', ['url' => '']);
+    $this->cluster->update(['url' => '']);
 
     expect(fn () => app(Proxmox::class)->get('/nodes'))
         ->toThrow(LogicException::class, 'URL');
@@ -124,7 +128,7 @@ it('fails clearly when the API URL is missing', function () {
 });
 
 it('fails clearly when required API configuration is missing', function () {
-    Cluster::connectUsing('default', ['url' => 'https://proxmox.example.test:8006/api2/json']);
+    $this->cluster->update(['api_token_secret' => '']);
 
     expect(fn () => app(Proxmox::class)->get('/nodes'))
         ->toThrow(LogicException::class, 'api_token_secret');
@@ -133,7 +137,7 @@ it('fails clearly when required API configuration is missing', function () {
 });
 
 it('requires a positive request timeout', function () {
-    Cluster::connectUsing('default', ['url' => 'https://proxmox.example.test:8006/api2/json', 'api_token_id' => 'a@pve!b', 'api_token_secret' => 'test-only', 'timeout' => 0]);
+    $this->cluster->update(['timeout' => 0]);
 
     expect(fn () => app(Proxmox::class)->get('/nodes'))
         ->toThrow(LogicException::class, 'timeout');

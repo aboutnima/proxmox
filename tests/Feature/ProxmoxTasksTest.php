@@ -10,12 +10,16 @@ use Proxmox\Exceptions\TaskFailedException;
 use Proxmox\Exceptions\TaskTimeoutException;
 use Proxmox\Exceptions\UnexpectedResponseException;
 use Proxmox\Facades\Cluster;
+use Proxmox\Models\Cluster as ClusterRecord;
 use Proxmox\Resources\Tasks\Task;
 
 const TASK_UPID = 'UPID:pve1:0001F2A3:01D0C8F4:6650A1B2:qmcreate:101:root@pam:';
 
 beforeEach(function () {
-    Cluster::connectUsing('default', [
+    $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
+
+    $this->cluster = ClusterRecord::query()->create([
+        'name' => 'default',
         'url' => 'https://proxmox.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pam!package',
         'api_token_secret' => 'token-secret',

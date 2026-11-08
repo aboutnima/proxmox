@@ -7,11 +7,15 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use Proxmox\Facades\Cluster;
+use Proxmox\Models\Cluster as ClusterRecord;
 use Proxmox\Resources\Nodes\Node;
 use Proxmox\Resources\VirtualMachines\VirtualMachine;
 
 beforeEach(function () {
-    Cluster::connectUsing('default', [
+    $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
+
+    $this->cluster = ClusterRecord::query()->create([
+        'name' => 'default',
         'url' => 'https://proxmox.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pam!package',
         'api_token_secret' => 'token-secret',

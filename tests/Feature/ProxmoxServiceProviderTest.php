@@ -5,17 +5,27 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schema;
 use Proxmox\Facades\Cluster;
+use Proxmox\Models\Cluster as ClusterRecord;
 use Proxmox\Proxmox;
 use Proxmox\ProxmoxManager;
 use Proxmox\ProxmoxServiceProvider;
 
-it('resolves the default client and shares the connection instance', function () {
-    $client = Cluster::connectUsing('default', []);
+it('resolves a fresh default client on each container lookup', function () {
+    $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
-    expect(app(Proxmox::class))->toBe($client)
-        ->and(app(Proxmox::class))->toBe(app(Proxmox::class))
-        ->and($client->getName())->toBe('default')
-        ->and(app(ProxmoxManager::class))->toBe(app(ProxmoxManager::class));
+    ClusterRecord::query()->create([
+        'name' => 'default',
+        'url' => 'https://proxmox.example.test:8006/api2/json',
+        'api_token_id' => 'a@pve!app',
+        'api_token_secret' => 'test-secret',
+    ]);
+    $first = app(Proxmox::class);
+    $second = app(Proxmox::class);
+
+    expect($first)->toBeInstanceOf(Proxmox::class)
+        ->and($second)->not->toBe($first)
+        ->and($first->getName())->toBe('default')
+        ->and($second->getName())->toBe('default');
 });
 
 it('exposes the cluster facade through the connection manager', function () {
