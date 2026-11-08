@@ -26,9 +26,9 @@ Store named cluster connections and use the live API. The package's only Eloquen
 - `Proxmox\Facades\Cluster` resolves API clients; `Proxmox\Models\Cluster` stores connection settings. Alias the model as `ClusterRecord` when importing both. API token secrets are encrypted with the application's key and hidden from model arrays and JSON. Validate application input before saving through Eloquent; the setup command validates its own inputs.
 - Keep TLS verification enabled. `ca_bundle` accepts a certificate file path or PEM contents; the command stores a supplied file's contents. Inline PEM certificates require cURL support for `CURLOPT_CAINFO_BLOB`.
 - The default stored connection name comes from `PROXMOX_CONNECTION` / `proxmox.default`, initially `default`. There are no package modes or configured connection lists.
-- Connections are cached by name in the application instance. Model saves/deletes invalidate the relevant cached clients. Use `Cluster::purge($name)` after bulk writes or changes from another process. Existing client variables retain old settings.
-- `Cluster::connectUsing($name, $settings)` creates a temporary cached client without a database write, useful in tests. HTTP settings include `timeout`, `connect_timeout`, `verify_ssl`, `ca_bundle`, and `retry` (`times`, `sleep`). GET retries apply only to connection failures; writes are not retried automatically.
-- Query `ClusterRecord` for all stored connections; `Cluster::getConnections()` contains resolved clients only.
+- Every `Cluster::connection($name)` call reads stored settings and builds a fresh client. Bulk updates, renames, and deletions are reflected on subsequent lookups without cache invalidation or model listeners. Existing client variables retain their original settings. Container injection of `Proxmox\Proxmox` also resolves a fresh default client.
+- `Cluster::connectUsing($name, $settings)` returns a standalone client without saving a database record or registering its name. Use the returned client directly; `connection($name)` still resolves stored clusters. HTTP settings include `timeout`, `connect_timeout`, `verify_ssl`, `ca_bundle`, and `retry` (`times`, `sleep`). GET retries apply only to connection failures; writes are not retried automatically.
+- Query `ClusterRecord` to list stored connections. The package maintains no connection registry in memory.
 
 ### 2. Fetch live data
 

@@ -5,11 +5,12 @@
 ### Added
 
 - `Proxmox\Facades\Cluster` for named API connections, such as `Cluster::connection('hetzner')->nodes()`.
-- A single cluster connection registry with encrypted token secrets, per-connection HTTP/TLS settings, and client invalidation after model changes.
+- A single cluster connection registry with encrypted token secrets and per-connection HTTP/TLS settings.
 - `php artisan proxmox:install [--migrate]` for repeatable configuration and migration publication, and `php artisan proxmox:create-cluster` for interactive connection setup.
 
 ### Changed
 
+- **Breaking:** connection lookups reload stored settings and build fresh clients every time. Runtime `connectUsing()` clients are standalone and do not register or override named connections.
 - **Breaking:** stored clusters are the standard connection source. Removed the `api` / `inventory` modes, configuration-backed connection lists, and inventory model configuration. `config/proxmox.php` now contains the default connection name only.
 - **Breaking:** replace the `Proxmox` facade import with `Proxmox\Facades\Cluster`.
 - **Breaking:** `node($name)->virtualMachines()` fetches a plain array immediately. Replace `virtualMachines()->all()` with `virtualMachines()` and `virtualMachines()->create($configuration)` with `node($name)->createVirtualMachine($configuration)`.
@@ -19,6 +20,7 @@
 
 ### Removed
 
+- Connection client caching, `purge()`, `getConnections()`, and model cache-invalidation hooks.
 - Eloquent node and VM models, `HasVirtualMachines`, inventory relationships, resource factories, and deprecated inventory resource aliases.
 - Node synchronization commands and lifecycle tracking through package tables.
 - Cluster `is_active`, installer mode options, and the cluster command's configuration import options.

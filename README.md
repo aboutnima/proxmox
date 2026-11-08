@@ -151,7 +151,7 @@ $backup = Cluster::connection('backup');
 
 Facade shortcuts such as `Cluster::nodes()` and injecting `Proxmox\Proxmox` use the default connection. If configuration is cached, rebuild it after changing `PROXMOX_CONNECTION`.
 
-Clients are cached by connection name in the current application instance. Saving or deleting a `ClusterRecord` clears its cached client for the next resolution. After bulk updates or changes made by another process, use `Cluster::purge('hetzner')` before resolving the connection again. Existing client variables retain their original settings.
+Every `Cluster::connection($name)` call reads the stored cluster settings and builds a fresh client. Subsequent lookups see saved changes, renames, and deletions automatically, including changes made through bulk updates or other processes. A returned client retains the settings it was created with; resolve a new connection to use updated settings. Container injection of `Proxmox\Proxmox` also resolves a fresh default client.
 
 For temporary connections or tests, supply settings directly:
 
@@ -163,7 +163,7 @@ $connection = Cluster::connectUsing('temporary', [
 ]);
 ```
 
-`connectUsing()` replaces the cached client for its name without saving a database record. It accepts `timeout`, `connect_timeout`, `verify_ssl`, `ca_bundle`, and `retry` (`times` and `sleep`). `Cluster::getConnections()` returns resolved clients; query `ClusterRecord` to list all stored connections. `Cluster::setDefaultConnection('backup')` changes the default for the current application instance.
+`connectUsing()` returns a standalone client without saving a database record or registering a connection name. Use the returned client for subsequent operations; `Cluster::connection('temporary')` still looks for a stored cluster named `temporary`. Runtime settings accept `timeout`, `connect_timeout`, `verify_ssl`, `ca_bundle`, and `retry` (`times` and `sleep`). Query `ClusterRecord` to list all stored connections. `Cluster::setDefaultConnection('backup')` changes the default for the current application instance.
 
 Run `php artisan about --only=proxmox` to inspect connection names without displaying secrets.
 
@@ -597,6 +597,8 @@ This version simplifies persistence to stored cluster connections. Update consum
 - Replace `node($name)->virtualMachines()->create($configuration)` with `node($name)->createVirtualMachine($configuration)`.
 - Replace package Eloquent node/VM models, `HasVirtualMachines`, model resource accessors, and inventory resource factories with application-owned records and explicit `connection()->node()->virtualMachine()` selection.
 - Replace scheduled node synchronization commands with application-owned fetching and persistence when needed.
+- Remove calls to `Cluster::purge()` and `Cluster::getConnections()`. Named lookups read stored settings and return fresh clients; query `ClusterRecord` to list stored connections.
+- Keep and use the client returned by `connectUsing()`. Runtime clients are independent of stored connection lookup and do not register their names.
 
 The installer preserves previously published migrations and configuration. Existing node/VM tables and their data are left untouched. Migrate ownership and service data into your application's models before retiring old tables. Existing cluster connection records remain usable; the old `is_active` field is no longer used.
 
