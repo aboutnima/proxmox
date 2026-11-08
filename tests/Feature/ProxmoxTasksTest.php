@@ -9,8 +9,8 @@ use Illuminate\Support\Sleep;
 use Proxmox\Exceptions\TaskFailedException;
 use Proxmox\Exceptions\TaskTimeoutException;
 use Proxmox\Exceptions\UnexpectedResponseException;
-use Proxmox\Facades\Cluster;
-use Proxmox\Models\Cluster as ClusterRecord;
+use Proxmox\Facades\ProxmoxCluster;
+use Proxmox\Models\Cluster;
 use Proxmox\Resources\Tasks\Task;
 
 const TASK_UPID = 'UPID:pve1:0001F2A3:01D0C8F4:6650A1B2:qmcreate:101:root@pam:';
@@ -18,7 +18,7 @@ const TASK_UPID = 'UPID:pve1:0001F2A3:01D0C8F4:6650A1B2:qmcreate:101:root@pam:';
 beforeEach(function () {
     $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
-    $this->cluster = ClusterRecord::query()->create([
+    $this->cluster = Cluster::query()->create([
         'name' => 'default',
         'url' => 'https://proxmox.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pam!package',
@@ -41,7 +41,7 @@ function taskStatusUrl(): string
 }
 
 it('reads the node from a full UPID', function () {
-    $task = Cluster::task(TASK_UPID);
+    $task = ProxmoxCluster::task(TASK_UPID);
 
     expect($task)->toBeInstanceOf(Task::class)
         ->and($task->node)->toBe('pve1')
@@ -50,20 +50,20 @@ it('reads the node from a full UPID', function () {
 });
 
 it('rejects values that are not UPIDs', function (string $upid) {
-    expect(fn () => Cluster::task($upid))->toThrow(InvalidArgumentException::class, 'UPID');
+    expect(fn () => ProxmoxCluster::task($upid))->toThrow(InvalidArgumentException::class, 'UPID');
 })->with(['', 'pve1:0001', 'UPID:', 'UPID::x']);
 
 it('selects a task on an explicit node', function () {
-    $task = Cluster::node('pve1')->task(TASK_UPID);
+    $task = ProxmoxCluster::node('pve1')->task(TASK_UPID);
 
     expect($task->node)->toBe('pve1')
-        ->and(fn () => Cluster::node('pve1')->task(' '))->toThrow(InvalidArgumentException::class, 'UPID');
+        ->and(fn () => ProxmoxCluster::node('pve1')->task(' '))->toThrow(InvalidArgumentException::class, 'UPID');
 });
 
 it('reads the task status', function () {
     Http::fake([taskStatusUrl() => Http::response(['data' => ['status' => 'running', 'type' => 'qmcreate']])]);
 
-    $task = Cluster::task(TASK_UPID);
+    $task = ProxmoxCluster::task(TASK_UPID);
 
     expect($task->status())->toBe(['status' => 'running', 'type' => 'qmcreate'])
         ->and($task->isRunning())->toBeTrue();
@@ -76,7 +76,7 @@ it('waits until a task stops successfully', function (string $exitStatus) {
         ->push(['data' => ['status' => 'stopped', 'exitstatus' => $exitStatus]]),
     ]);
 
-    $task = Cluster::task(TASK_UPID);
+    $task = ProxmoxCluster::task(TASK_UPID);
 
     expect($task->wait(timeout: 10, interval: 2))->toBe($task);
 
@@ -89,7 +89,7 @@ it('throws when a task stops with an error', function () {
     Http::fake([taskStatusUrl() => Http::response(['data' => ['status' => 'stopped', 'exitstatus' => 'unable to create VM 101']])]);
 
     try {
-        Cluster::task(TASK_UPID)->wait();
+        ProxmoxCluster::task(TASK_UPID)->wait();
         $this->fail('The task should have failed.');
     } catch (TaskFailedException $exception) {
         expect($exception->upid)->toBe(TASK_UPID)
@@ -104,7 +104,7 @@ it('throws when a task does not stop before the timeout', function () {
     Http::fake([taskStatusUrl() => Http::response(['data' => ['status' => 'running']])]);
 
     try {
-        Cluster::task(TASK_UPID)->wait(timeout: 3);
+        ProxmoxCluster::task(TASK_UPID)->wait(timeout: 3);
         $this->fail('The task should have timed out.');
     } catch (TaskTimeoutException $exception) {
         expect($exception->upid)->toBe(TASK_UPID)
@@ -119,7 +119,7 @@ it('throws when a task does not stop before the timeout', function () {
 it('rejects invalid wait arguments before polling', function (int $timeout, int $interval) {
     Http::fake();
 
-    expect(fn () => Cluster::task(TASK_UPID)->wait($timeout, $interval))
+    expect(fn () => ProxmoxCluster::task(TASK_UPID)->wait($timeout, $interval))
         ->toThrow(InvalidArgumentException::class, 'positive');
 
     Http::assertNothingSent();
@@ -128,7 +128,7 @@ it('rejects invalid wait arguments before polling', function (int $timeout, int 
 it('rejects malformed task status responses', function (array $data) {
     Http::fake([taskStatusUrl() => Http::response(['data' => $data])]);
 
-    expect(fn () => Cluster::task(TASK_UPID)->wait())->toThrow(UnexpectedResponseException::class);
+    expect(fn () => ProxmoxCluster::task(TASK_UPID)->wait())->toThrow(UnexpectedResponseException::class);
 })->with([
     'missing status' => [['type' => 'qmcreate']],
     'unknown status' => [['status' => 'paused']],
@@ -139,7 +139,7 @@ it('rejects malformed task status responses', function (array $data) {
 it('reads task log lines with pagination', function () {
     Http::fake(['*' => Http::response(['data' => [['n' => 21, 't' => 'transferred 1.0 GiB']]])]);
 
-    expect(Cluster::task(TASK_UPID)->log(start: 20, limit: 10))->toBe([['n' => 21, 't' => 'transferred 1.0 GiB']]);
+    expect(ProxmoxCluster::task(TASK_UPID)->log(start: 20, limit: 10))->toBe([['n' => 21, 't' => 'transferred 1.0 GiB']]);
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
         && $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/pve1/tasks/'.rawurlencode(TASK_UPID).'/log?start=20&limit=10');

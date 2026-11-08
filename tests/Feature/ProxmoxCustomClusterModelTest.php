@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Proxmox\Exceptions\InvalidConfigurationException;
-use Proxmox\Facades\Cluster;
+use Proxmox\Facades\ProxmoxCluster;
 use Proxmox\Tests\Fixtures\CustomCluster;
 
 beforeEach(function () {
@@ -34,7 +34,7 @@ it('resolves connections through the configured cluster model', function () {
     CustomCluster::query()->create($this->attributes);
     Http::fake(['*' => Http::response(['data' => [['node' => 'pve1']]])]);
 
-    expect(Cluster::connection('hetzner')->nodes())->toBe([['node' => 'pve1']]);
+    expect(ProxmoxCluster::connection('hetzner')->nodes())->toBe([['node' => 'pve1']]);
 
     Http::assertSent(fn (Request $request): bool => $request->url() === 'https://custom.example.test:8006/api2/json/nodes'
         && $request->hasHeader('Authorization', 'PVEAPIToken=laravel@pve!custom=custom-secret'));
@@ -68,7 +68,7 @@ it('lists configured model connections in the about command', function () {
 it('rejects invalid cluster model configuration before querying or requesting', function (mixed $model) {
     config()->set('proxmox.model', $model);
 
-    expect(fn () => Cluster::connection('hetzner'))
+    expect(fn () => ProxmoxCluster::connection('hetzner'))
         ->toThrow(InvalidConfigurationException::class, 'proxmox.model');
 
     Http::assertNothingSent();

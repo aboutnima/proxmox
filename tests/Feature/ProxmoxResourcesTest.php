@@ -6,15 +6,15 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
-use Proxmox\Facades\Cluster;
-use Proxmox\Models\Cluster as ClusterRecord;
+use Proxmox\Facades\ProxmoxCluster;
+use Proxmox\Models\Cluster;
 use Proxmox\Resources\Nodes\Node;
 use Proxmox\Resources\VirtualMachines\VirtualMachine;
 
 beforeEach(function () {
     $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
-    $this->cluster = ClusterRecord::query()->create([
+    $this->cluster = Cluster::query()->create([
         'name' => 'default',
         'url' => 'https://proxmox.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pam!package',
@@ -29,7 +29,7 @@ it('fetches nodes immediately as an array without exposing the response envelope
 
     Http::fake(['*/nodes' => Http::response(['data' => $data])]);
 
-    $nodes = Cluster::nodes();
+    $nodes = ProxmoxCluster::nodes();
 
     expect($nodes)->toBeArray()->toBe($data);
 
@@ -47,7 +47,7 @@ it('fetches QEMU virtual machines immediately as an array scoped to a node', fun
 
     Http::fake(['*/nodes/my/qemu' => Http::response(['data' => $data])]);
 
-    $vms = Cluster::node('my')->virtualMachines();
+    $vms = ProxmoxCluster::node('my')->virtualMachines();
 
     expect($vms)->toBeArray()->toBe($data);
 
@@ -61,7 +61,7 @@ it('selects a VM without fetching until explicitly refreshed', function () {
 
     Http::fake(['*/nodes/my/qemu/101/status/current' => Http::response(['data' => $data])]);
 
-    $vm = Cluster::node('my')->virtualMachine(101);
+    $vm = ProxmoxCluster::node('my')->virtualMachine(101);
 
     expect($vm)->toBeInstanceOf(VirtualMachine::class)
         ->and($vm->node)->toBe('my')
@@ -86,7 +86,7 @@ it('updates the stored VM data only when explicitly refreshed', function () {
         ->push(['data' => ['status' => 'stopped', 'uptime' => 0]]),
     ]);
 
-    $vm = Cluster::node('my')->virtualMachine(101)->refresh();
+    $vm = ProxmoxCluster::node('my')->virtualMachine(101)->refresh();
 
     expect($vm->toArray())->toBe(['status' => 'running'])
         ->and($vm->status())->toBe(['status' => 'stopped'])
@@ -109,7 +109,7 @@ it('preserves fetched VM data when a refresh fails', function (string $failure, 
 
     Http::fake(['*' => $sequence]);
 
-    $vm = Cluster::node('my')->virtualMachine(101)->refresh();
+    $vm = ProxmoxCluster::node('my')->virtualMachine(101)->refresh();
 
     expect(fn () => $vm->refresh())->toThrow($exception)
         ->and($vm->toArray())->toBe($data);
@@ -120,7 +120,7 @@ it('preserves fetched VM data when a refresh fails', function (string $failure, 
 ]);
 
 it('rejects the removed plural node selector before sending a request', function () {
-    expect(fn () => Cluster::nodes('my'))
+    expect(fn () => ProxmoxCluster::nodes('my'))
         ->toThrow(InvalidArgumentException::class, 'node(');
 
     Http::assertNothingSent();
@@ -132,8 +132,8 @@ it('keeps independently created node scopes separate and reusable', function () 
         '*/nodes/other/qemu' => Http::response(['data' => [['vmid' => 201]]]),
     ]);
 
-    $first = Cluster::node('my');
-    $second = Cluster::node('other');
+    $first = ProxmoxCluster::node('my');
+    $second = ProxmoxCluster::node('other');
 
     Http::assertNothingSent();
 
@@ -147,7 +147,7 @@ it('keeps independently created node scopes separate and reusable', function () 
 it('returns an empty array when a listing has no results', function (bool $vms) {
     Http::fake(['*' => Http::response(['data' => []])]);
 
-    $results = $vms ? Cluster::node('my')->virtualMachines() : Cluster::nodes();
+    $results = $vms ? ProxmoxCluster::node('my')->virtualMachines() : ProxmoxCluster::nodes();
 
     expect($results)->toBe([]);
     Http::assertSentCount(1);
@@ -156,12 +156,12 @@ it('returns an empty array when a listing has no results', function (bool $vms) 
 it('automatically throws for unsuccessful resource listings', function (int $status, bool $vms) {
     Http::fake(['*' => Http::response(['errors' => ['permission' => 'denied']], $status)]);
 
-    expect(fn () => $vms ? Cluster::node('my')->virtualMachines() : Cluster::nodes())
+    expect(fn () => $vms ? ProxmoxCluster::node('my')->virtualMachines() : ProxmoxCluster::nodes())
         ->toThrow(RequestException::class, (string) $status);
 })->with([401, 403, 404, 500])->with([false, true]);
 
 it('rejects removed direct resource shortcuts', function (string $method, array $parameters) {
-    expect(fn () => Cluster::{$method}(...$parameters))->toThrow(BadMethodCallException::class, $method);
+    expect(fn () => ProxmoxCluster::{$method}(...$parameters))->toThrow(BadMethodCallException::class, $method);
 
     Http::assertNothingSent();
 })->with([
@@ -176,14 +176,14 @@ it('rejects removed direct resource shortcuts', function (string $method, array 
 it('propagates connection failures from resource listings', function (bool $vms) {
     Http::fake(['*' => Http::failedConnection()]);
 
-    expect(fn () => $vms ? Cluster::node('my')->virtualMachines() : Cluster::nodes())
+    expect(fn () => $vms ? ProxmoxCluster::node('my')->virtualMachines() : ProxmoxCluster::nodes())
         ->toThrow(ConnectionException::class);
 })->with([false, true]);
 
 it('rejects malformed listing responses instead of returning empty results', function (array|string $body, bool $vms) {
     Http::fake(['*' => Http::response($body)]);
 
-    expect(fn () => $vms ? Cluster::node('my')->virtualMachines() : Cluster::nodes())
+    expect(fn () => $vms ? ProxmoxCluster::node('my')->virtualMachines() : ProxmoxCluster::nodes())
         ->toThrow(UnexpectedValueException::class, 'data');
 })->with([
     'missing data' => [[]],
@@ -195,7 +195,7 @@ it('rejects malformed listing responses instead of returning empty results', fun
 ])->with([false, true]);
 
 it('validates node names before sending VM listing requests', function (string $node) {
-    expect(fn () => Cluster::node($node)->virtualMachines())
+    expect(fn () => ProxmoxCluster::node($node)->virtualMachines())
         ->toThrow(InvalidArgumentException::class, 'node');
 
     Http::assertNothingSent();
@@ -204,7 +204,7 @@ it('validates node names before sending VM listing requests', function (string $
 it('encodes a node name as one path segment', function () {
     Http::fake(['*' => Http::response(['data' => []])]);
 
-    Cluster::node(' my?node#name ')->virtualMachines();
+    ProxmoxCluster::node(' my?node#name ')->virtualMachines();
 
     Http::assertSent(fn (Request $request): bool => $request->url()
         === 'https://proxmox.example.test:8006/api2/json/nodes/my%3Fnode%23name/qemu');
@@ -213,7 +213,7 @@ it('encodes a node name as one path segment', function () {
 it('keeps the generic HTTP methods available for raw responses', function () {
     Http::fake(['*/nodes' => Http::response(['errors' => ['permission' => 'denied']], 403)]);
 
-    $response = Cluster::get('nodes');
+    $response = ProxmoxCluster::get('nodes');
 
     expect($response->status())->toBe(403)
         ->and($response->json('errors'))->toBe(['permission' => 'denied']);
@@ -225,8 +225,8 @@ it('returns independent array snapshots for successive listing requests', functi
 
     Http::fake(['*' => Http::sequence()->push(['data' => $first])->push(['data' => $second])]);
 
-    $original = $vms ? Cluster::node('my')->virtualMachines() : Cluster::nodes();
-    $latest = $vms ? Cluster::node('my')->virtualMachines() : Cluster::nodes();
+    $original = $vms ? ProxmoxCluster::node('my')->virtualMachines() : ProxmoxCluster::nodes();
+    $latest = $vms ? ProxmoxCluster::node('my')->virtualMachines() : ProxmoxCluster::nodes();
 
     expect($original)->toBe($first)
         ->and($latest)->toBe($second);
@@ -243,7 +243,7 @@ it('lets consumers filter fetched arrays without further API requests', function
 
     Http::fake(['*' => Http::response(['data' => $data])]);
 
-    $items = collect($vms ? Cluster::node('my')->virtualMachines() : Cluster::nodes());
+    $items = collect($vms ? ProxmoxCluster::node('my')->virtualMachines() : ProxmoxCluster::nodes());
     $running = $items->where('status', 'running');
 
     expect($running->where('maxmem', '>=', 4096)->first())->toBe($data[2])
@@ -264,7 +264,7 @@ it('preserves attribute types for consumer collection comparisons', function () 
         ['name' => 'worker', 'vmid' => 102],
     ]])]);
 
-    $items = collect(Cluster::node('my')->virtualMachines());
+    $items = collect(ProxmoxCluster::node('my')->virtualMachines());
 
     expect($items->where('vmid', '101')->first())->toBe(['name' => null, 'vmid' => 101])
         ->and($items->where('vmid', '===', '101')->first())->toBeNull()
@@ -280,8 +280,8 @@ it('keeps fetched list data usable when a later listing is empty', function (boo
         ->push(['data' => []]),
     ]);
 
-    $items = collect($vms ? Cluster::node('my')->virtualMachines() : Cluster::nodes());
-    $empty = collect($vms ? Cluster::node('my')->virtualMachines() : Cluster::nodes());
+    $items = collect($vms ? ProxmoxCluster::node('my')->virtualMachines() : ProxmoxCluster::nodes());
+    $empty = collect($vms ? ProxmoxCluster::node('my')->virtualMachines() : ProxmoxCluster::nodes());
 
     expect($items->first())->toBe(['name' => 'first'])
         ->and($items->where('name', 'missing')->first())->toBeNull()
@@ -292,7 +292,7 @@ it('keeps fetched list data usable when a later listing is empty', function (boo
 })->with([false, true]);
 
 it('requires an identifier when selecting a VM', function () {
-    expect(fn () => Cluster::node('my')->virtualMachine())->toThrow(ArgumentCountError::class);
+    expect(fn () => ProxmoxCluster::node('my')->virtualMachine())->toThrow(ArgumentCountError::class);
 
     Http::assertNothingSent();
 });
@@ -310,7 +310,7 @@ it('raises listing errors before consumers can filter the returned data', functi
         'connection' => ConnectionException::class,
     };
 
-    expect(fn () => collect($vms ? Cluster::node('my')->virtualMachines() : Cluster::nodes())
+    expect(fn () => collect($vms ? ProxmoxCluster::node('my')->virtualMachines() : ProxmoxCluster::nodes())
         ->where('name', 'missing')->first())->toThrow($exception);
 })->with(['http', 'malformed', 'connection'])->with([false, true]);
 
@@ -322,7 +322,7 @@ it('retrieves individual resource data from its status endpoint', function (bool
 
     Http::fake(['*' => Http::response(['data' => $data])]);
 
-    $attributes = $vms ? Cluster::node('my')->virtualMachine(101)->status() : Cluster::node('my')->status();
+    $attributes = $vms ? ProxmoxCluster::node('my')->virtualMachine(101)->status() : ProxmoxCluster::node('my')->status();
 
     expect($attributes)->toBe($data);
 
@@ -335,7 +335,7 @@ it('retrieves individual resource data from its status endpoint', function (bool
 it('keeps query methods out of selected resources', function (bool $vms) {
     Http::fake(['*' => Http::response(['data' => ['status' => 'running']])]);
 
-    $node = Cluster::node('my');
+    $node = ProxmoxCluster::node('my');
     $resource = $vms ? $node->virtualMachine(101) : $node;
 
     expect($resource)->toBeInstanceOf($vms ? VirtualMachine::class : Node::class);
@@ -354,7 +354,7 @@ it('uses distinct methods for a VM listing and an identified VM', function () {
         '*/nodes/my/qemu/101/status/current' => Http::response(['data' => $vmStatus]),
     ]);
 
-    $node = Cluster::node('my');
+    $node = ProxmoxCluster::node('my');
     $list = $node->virtualMachines();
     $vm = $node->virtualMachine(101)->refresh();
 
@@ -380,7 +380,7 @@ it('creates a VM with native Proxmox QEMU resource and cloud-init options', func
 
     Http::fake(['*/nodes/my/qemu' => Http::response(['data' => $task])]);
 
-    expect(Cluster::node('my')->createVirtualMachine($configuration)->upid)->toBe($task);
+    expect(ProxmoxCluster::node('my')->createVirtualMachine($configuration)->upid)->toBe($task);
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
         && $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/qemu'
@@ -392,14 +392,14 @@ it('creates a VM with native Proxmox QEMU resource and cloud-init options', func
 it('throws API errors when VM creation fails', function (int $status) {
     Http::fake(['*' => Http::response(['errors' => ['vmid' => 'already exists']], $status)]);
 
-    expect(fn () => Cluster::node('my')->createVirtualMachine(['vmid' => 101]))
+    expect(fn () => ProxmoxCluster::node('my')->createVirtualMachine(['vmid' => 101]))
         ->toThrow(RequestException::class, (string) $status);
 })->with([400, 403, 500]);
 
 it('rejects malformed task IDs from VM creation responses', function (array|string $body) {
     Http::fake(['*' => Http::response($body)]);
 
-    expect(fn () => Cluster::node('my')->createVirtualMachine(['vmid' => 101]))
+    expect(fn () => ProxmoxCluster::node('my')->createVirtualMachine(['vmid' => 101]))
         ->toThrow(UnexpectedValueException::class, 'task ID');
 })->with([
     'missing data' => [[]],
@@ -412,12 +412,12 @@ it('rejects malformed task IDs from VM creation responses', function (array|stri
 it('propagates connection failures when creating a VM', function () {
     Http::fake(['*' => Http::failedConnection()]);
 
-    expect(fn () => Cluster::node('my')->createVirtualMachine(['vmid' => 101]))
+    expect(fn () => ProxmoxCluster::node('my')->createVirtualMachine(['vmid' => 101]))
         ->toThrow(ConnectionException::class);
 });
 
 it('validates node names before creating a VM', function (string $node) {
-    expect(fn () => Cluster::node($node)->createVirtualMachine(['vmid' => 101]))
+    expect(fn () => ProxmoxCluster::node($node)->createVirtualMachine(['vmid' => 101]))
         ->toThrow(InvalidArgumentException::class, 'node');
 
     Http::assertNothingSent();
@@ -429,8 +429,8 @@ it('keeps fetched VM snapshots independent and accepts integer or string identif
         '*/nodes/other/qemu/201/status/current' => Http::response(['data' => ['vmid' => 201]]),
     ]);
 
-    $first = Cluster::node('my')->virtualMachine('101')->refresh();
-    $second = Cluster::node('other')->virtualMachine(201)->refresh();
+    $first = ProxmoxCluster::node('my')->virtualMachine('101')->refresh();
+    $second = ProxmoxCluster::node('other')->virtualMachine(201)->refresh();
 
     expect($first->toArray())->toBe(['vmid' => 101])
         ->and($second->toArray())->toBe(['vmid' => 201])
@@ -440,14 +440,14 @@ it('keeps fetched VM snapshots independent and accepts integer or string identif
 });
 
 it('rejects invalid VM identifiers before sending a request', function (int|string $vmid) {
-    expect(fn () => Cluster::node('my')->virtualMachine($vmid))
+    expect(fn () => ProxmoxCluster::node('my')->virtualMachine($vmid))
         ->toThrow(InvalidArgumentException::class, 'VM ID');
 
     Http::assertNothingSent();
 })->with([0, -1, '', ' ', '0', '-1', '0101', '1.5', '../101', '101/config', '101?x=1', '101#fragment']);
 
 it('validates node names as soon as an individual resource is selected', function (bool $vms) {
-    expect(fn () => $vms ? Cluster::node('../other')->virtualMachine(101) : Cluster::node('../other'))
+    expect(fn () => $vms ? ProxmoxCluster::node('../other')->virtualMachine(101) : ProxmoxCluster::node('../other'))
         ->toThrow(InvalidArgumentException::class, 'node');
 
     Http::assertNothingSent();
@@ -456,7 +456,7 @@ it('validates node names as soon as an individual resource is selected', functio
 it('encodes node names in individual resource paths', function (bool $vms) {
     Http::fake(['*' => Http::response(['data' => ['uptime' => 100]])]);
 
-    $node = Cluster::node(' my?node#name ');
+    $node = ProxmoxCluster::node(' my?node#name ');
     $vms ? $node->virtualMachine(101)->status() : $node->status();
 
     Http::assertSent(fn (Request $request): bool => $request->url()
@@ -467,21 +467,21 @@ it('encodes node names in individual resource paths', function (bool $vms) {
 it('automatically throws for unsuccessful individual resource requests', function (int $status, bool $vms) {
     Http::fake(['*' => Http::response(['errors' => ['permission' => 'denied']], $status)]);
 
-    expect(fn () => $vms ? Cluster::node('my')->virtualMachine(101)->status() : Cluster::node('my')->status())
+    expect(fn () => $vms ? ProxmoxCluster::node('my')->virtualMachine(101)->status() : ProxmoxCluster::node('my')->status())
         ->toThrow(RequestException::class, (string) $status);
 })->with([401, 403, 404, 500])->with([false, true]);
 
 it('propagates connection failures from individual resources', function (bool $vms) {
     Http::fake(['*' => Http::failedConnection()]);
 
-    expect(fn () => $vms ? Cluster::node('my')->virtualMachine(101)->status() : Cluster::node('my')->status())
+    expect(fn () => $vms ? ProxmoxCluster::node('my')->virtualMachine(101)->status() : ProxmoxCluster::node('my')->status())
         ->toThrow(ConnectionException::class);
 })->with([false, true]);
 
 it('rejects malformed individual resource data', function (array|string $body, bool $vms) {
     Http::fake(['*' => Http::response($body)]);
 
-    expect(fn () => $vms ? Cluster::node('my')->virtualMachine(101)->status() : Cluster::node('my')->status())
+    expect(fn () => $vms ? ProxmoxCluster::node('my')->virtualMachine(101)->status() : ProxmoxCluster::node('my')->status())
         ->toThrow(UnexpectedValueException::class, 'data');
 })->with([
     'missing data' => [[]],

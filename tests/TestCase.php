@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Proxmox\Tests;
 
+use Illuminate\Filesystem\Filesystem;
 use Orchestra\Testbench\TestCase as Orchestra;
 use Proxmox\ProxmoxServiceProvider;
 
@@ -14,6 +15,11 @@ abstract class TestCase extends Orchestra
         return [
             ProxmoxServiceProvider::class,
         ];
+    }
+
+    protected function getPackageAliases($app): array
+    {
+        return (new Filesystem)->json(__DIR__.'/../composer.json')['extra']['laravel']['aliases'];
     }
 
     protected function defineEnvironment($app): void

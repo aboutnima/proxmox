@@ -14,7 +14,7 @@ use function Laravel\Prompts\text;
 class CreateClusterCommand extends Command
 {
     protected $signature = 'proxmox:create-cluster
-        {name? : A unique cluster name, used with Cluster::connection($name)}
+        {name? : A unique cluster name, used with ProxmoxCluster::connection($name)}
         {--url= : The Proxmox API URL, including /api2/json}
         {--token-id= : The API token ID, such as laravel@pve!app}
         {--timeout=30 : Seconds allowed for each request}
@@ -31,7 +31,7 @@ class CreateClusterCommand extends Command
             label: 'Cluster name',
             placeholder: 'default',
             required: true,
-            hint: 'Used with Cluster::connection($name).',
+            hint: 'Used with ProxmoxCluster::connection($name).',
         );
 
         if (preg_match('/^[A-Za-z0-9_-]{1,100}$/', $name) !== 1) {

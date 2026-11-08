@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
-use Proxmox\Facades\Cluster;
-use Proxmox\Models\Cluster as ClusterRecord;
+use Proxmox\Facades\ProxmoxCluster;
+use Proxmox\Models\Cluster;
 use Proxmox\Proxmox;
 
 beforeEach(function () {
     $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
-    $this->cluster = ClusterRecord::query()->create([
+    $this->cluster = Cluster::query()->create([
         'name' => 'default',
         'url' => 'https://proxmox.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pam!package',
@@ -27,7 +27,7 @@ beforeEach(function () {
 });
 
 it('sends authenticated GET requests to the configured API URL', function () {
-    $response = Cluster::get('/nodes', ['type' => 'qemu']);
+    $response = ProxmoxCluster::get('/nodes', ['type' => 'qemu']);
 
     expect($response->json('data'))->toBe([['node' => 'pve1']]);
 
@@ -38,7 +38,7 @@ it('sends authenticated GET requests to the configured API URL', function () {
 });
 
 it('gets the available nodes', function () {
-    $nodes = Cluster::nodes();
+    $nodes = ProxmoxCluster::nodes();
 
     expect($nodes)->toBeArray()->toBe([['node' => 'pve1']]);
 
@@ -47,7 +47,7 @@ it('gets the available nodes', function () {
 });
 
 it('gets QEMU virtual machines for a node', function () {
-    $vms = Cluster::node('my')->virtualMachines();
+    $vms = ProxmoxCluster::node('my')->virtualMachines();
 
     expect($vms)->toBeArray()->toBe([['status' => 'running', 'vmid' => 101]]);
 
@@ -57,7 +57,7 @@ it('gets QEMU virtual machines for a node', function () {
 
 it('rejects invalid node names when listing virtual machines', function () {
     foreach (['', '../other', 'my/node'] as $node) {
-        expect(fn () => Cluster::node($node)->virtualMachines())
+        expect(fn () => ProxmoxCluster::node($node)->virtualMachines())
             ->toThrow(InvalidArgumentException::class, 'node');
     }
 

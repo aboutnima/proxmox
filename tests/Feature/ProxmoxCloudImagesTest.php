@@ -8,14 +8,14 @@ use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Sleep;
-use Proxmox\Facades\Cluster;
-use Proxmox\Models\Cluster as ClusterRecord;
+use Proxmox\Facades\ProxmoxCluster;
+use Proxmox\Models\Cluster;
 use Proxmox\Resources\Tasks\Task;
 
 beforeEach(function () {
     $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
-    $this->cluster = ClusterRecord::query()->create([
+    $this->cluster = Cluster::query()->create([
         'name' => 'default',
         'url' => 'https://proxmox.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pam!package',
@@ -40,8 +40,8 @@ it('lists importable QCOW2 images as arrays through the facade and client', func
     ]])]);
 
     $images = $direct
-        ? Cluster::connection()->node('my')->images('local')
-        : Cluster::node('my')->images('local');
+        ? ProxmoxCluster::connection()->node('my')->images('local')
+        : ProxmoxCluster::node('my')->images('local');
 
     expect($images)->toBeArray()->toBe([$image]);
 
@@ -59,26 +59,26 @@ it('fetches image arrays scoped to each storage for consumer filtering', functio
         '*/storage/other/*' => Http::response(['data' => []]),
     ]);
 
-    $images = Cluster::node('my')->images('local');
+    $images = ProxmoxCluster::node('my')->images('local');
     $items = collect($images);
 
     expect($images)->toBe([$image])
         ->and($items->where('volid', $image['volid'])->first())->toBe($image)
         ->and($items->where('volid', 'local:import/missing.qcow2')->first())->toBeNull()
-        ->and(Cluster::node('my')->images('other'))->toBe([]);
+        ->and(ProxmoxCluster::node('my')->images('other'))->toBe([]);
 
     Http::assertSentCount(2);
 });
 
 it('rejects invalid image storage identifiers before requesting content', function (string $storage) {
-    expect(fn () => Cluster::node('my')->images($storage))
+    expect(fn () => ProxmoxCluster::node('my')->images($storage))
         ->toThrow(InvalidArgumentException::class, 'storage');
 
     Http::assertNothingSent();
 })->with(['', ' ', '../local', 'local/path', 'local?content=images', 'local\\other', "local\n"]);
 
 it('validates the node for image listings', function () {
-    expect(fn () => Cluster::node('../my')->images('local'))
+    expect(fn () => ProxmoxCluster::node('../my')->images('local'))
         ->toThrow(InvalidArgumentException::class, 'node');
 
     Http::assertNothingSent();
@@ -87,14 +87,14 @@ it('validates the node for image listings', function () {
 it('throws HTTP and connection failures from image listings', function (bool $connection) {
     Http::fake(['*' => $connection ? Http::failedConnection() : Http::response([], 403)]);
 
-    expect(fn () => Cluster::node('my')->images('local'))
+    expect(fn () => ProxmoxCluster::node('my')->images('local'))
         ->toThrow($connection ? ConnectionException::class : RequestException::class);
 })->with([false, true]);
 
 it('rejects malformed image listing envelopes', function (array $body) {
     Http::fake(['*' => Http::response($body)]);
 
-    expect(fn () => Cluster::node('my')->images('local'))
+    expect(fn () => ProxmoxCluster::node('my')->images('local'))
         ->toThrow(UnexpectedValueException::class);
 })->with([
     'missing data' => [[]],
@@ -121,8 +121,8 @@ it('maps guest credentials and preserves CPU topology through facade and client 
     Http::fake(['*' => Http::response(['data' => 'UPID:create'])]);
 
     $node = $direct
-        ? Cluster::connection()->node('my')
-        : Cluster::node('my');
+        ? ProxmoxCluster::connection()->node('my')
+        : ProxmoxCluster::node('my');
     $task = $node->createVirtualMachine($configuration);
 
     expect($task)->toBeInstanceOf(Task::class)
@@ -150,7 +150,7 @@ it('maps guest credentials and preserves CPU topology through facade and client 
 it('adds a Cloud-Init drive for each readable guest credential independently', function (string $field, string $native) {
     Http::fake(['*' => Http::response(['data' => 'UPID:create'])]);
 
-    Cluster::node('my')->createVirtualMachine([
+    ProxmoxCluster::node('my')->createVirtualMachine([
         'vmid' => 101, 'storage' => 'local-lvm', $field => 'test-only',
     ]);
 
@@ -174,7 +174,7 @@ it('leaves native guest credentials and encoded SSH keys unchanged', function ()
         'ide2' => 'local-lvm:cloudinit',
     ];
 
-    Cluster::node('my')->createVirtualMachine($configuration);
+    ProxmoxCluster::node('my')->createVirtualMachine($configuration);
 
     Http::assertSent(fn (Request $request): bool => $request->data() === $configuration);
 });
@@ -182,7 +182,7 @@ it('leaves native guest credentials and encoded SSH keys unchanged', function ()
 it('imports a selected image into a new boot disk with Cloud-Init and a serial console', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:import'])]);
 
-    $task = Cluster::node('my')->createVirtualMachine([
+    $task = ProxmoxCluster::node('my')->createVirtualMachine([
         'vmid' => 101,
         'image' => 'local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2',
         'storage' => 'local-lvm',
@@ -213,7 +213,7 @@ it('imports a selected image into a new boot disk with Cloud-Init and a serial c
 it('preserves explicit native boot and console choices for imported images', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:import'])]);
 
-    Cluster::node('my')->createVirtualMachine([
+    ProxmoxCluster::node('my')->createVirtualMachine([
         'vmid' => 101,
         'image' => 'local:import/ubuntu.qcow2',
         'storage' => 'local-lvm',
@@ -240,8 +240,8 @@ it('waits for successful import before requesting an absolute disk size', functi
 
     $configuration = ['vmid' => '101', 'image' => 'local:import/ubuntu.qcow2', 'storage' => 'local-lvm', 'disk' => 32];
     $node = $direct
-        ? Cluster::connection()->node('my')
-        : Cluster::node('my');
+        ? ProxmoxCluster::connection()->node('my')
+        : ProxmoxCluster::node('my');
     $task = $node->createVirtualMachine($configuration, importTimeout: 10);
 
     expect($task->upid)->toBe('UPID:resize');
@@ -268,7 +268,7 @@ it('propagates connection failures while polling or submitting the resize', func
         '*/resize' => Http::failedConnection(),
     ]);
 
-    expect(fn () => Cluster::node('my')->createVirtualMachine([
+    expect(fn () => ProxmoxCluster::node('my')->createVirtualMachine([
         'vmid' => 101, 'image' => 'local:import/ubuntu.qcow2', 'storage' => 'local-lvm', 'disk' => 32,
     ]))->toThrow(ConnectionException::class);
 })->with([false, true]);
@@ -280,7 +280,7 @@ it('requires a valid task ID from the resize endpoint', function (mixed $task) {
         '*/resize' => Http::response(['data' => $task]),
     ]);
 
-    expect(fn () => Cluster::node('my')->createVirtualMachine([
+    expect(fn () => ProxmoxCluster::node('my')->createVirtualMachine([
         'vmid' => 101, 'image' => 'local:import/ubuntu.qcow2', 'storage' => 'local-lvm', 'disk' => 32,
     ]))->toThrow(UnexpectedValueException::class, 'task ID');
 })->with([null, '', ' ', 101, [[]]]);
@@ -291,7 +291,7 @@ it('does not resize after unsuccessful or malformed import task status', functio
         '*/tasks/*' => Http::response($body),
     ]);
 
-    expect(fn () => Cluster::node('my')->createVirtualMachine([
+    expect(fn () => ProxmoxCluster::node('my')->createVirtualMachine([
         'vmid' => 101, 'image' => 'local:import/ubuntu.qcow2', 'storage' => 'local-lvm', 'disk' => 32,
     ]))->toThrow($exception);
 
@@ -309,7 +309,7 @@ it('times out without resizing or deleting a VM whose import is still running', 
         '*/tasks/*' => Http::response(['data' => ['status' => 'running']]),
     ]);
 
-    expect(fn () => Cluster::node('my')->createVirtualMachine([
+    expect(fn () => ProxmoxCluster::node('my')->createVirtualMachine([
         'vmid' => 101, 'image' => 'local:import/ubuntu.qcow2', 'storage' => 'local-lvm', 'disk' => 32,
     ], importTimeout: 1))->toThrow(RuntimeException::class, 'UPID:import');
 
@@ -326,13 +326,13 @@ it('propagates HTTP failures while polling or submitting the resize', function (
         '*/resize' => Http::response([], 403),
     ]);
 
-    expect(fn () => Cluster::node('my')->createVirtualMachine([
+    expect(fn () => ProxmoxCluster::node('my')->createVirtualMachine([
         'vmid' => 101, 'image' => 'local:import/ubuntu.qcow2', 'storage' => 'local-lvm', 'disk' => 32,
     ]))->toThrow(RequestException::class, '403');
 })->with([false, true]);
 
 it('rejects invalid readable cloud image settings before creation', function (array $invalid, string $field) {
-    expect(fn () => Cluster::node('my')->createVirtualMachine(array_replace([
+    expect(fn () => ProxmoxCluster::node('my')->createVirtualMachine(array_replace([
         'vmid' => 101, 'image' => 'local:import/ubuntu.qcow2', 'storage' => 'local-lvm',
     ], $invalid)))->toThrow(InvalidArgumentException::class, $field);
 
@@ -363,14 +363,14 @@ it('rejects invalid readable cloud image settings before creation', function (ar
 ]);
 
 it('requires storage for guest credentials even without an image', function (string $field) {
-    expect(fn () => Cluster::node('my')->createVirtualMachine(['vmid' => 101, $field => 'test-only']))
+    expect(fn () => ProxmoxCluster::node('my')->createVirtualMachine(['vmid' => 101, $field => 'test-only']))
         ->toThrow(InvalidArgumentException::class, 'storage');
 
     Http::assertNothingSent();
 })->with(['user', 'password', 'ssh_key']);
 
 it('validates the import wait timeout before allocating a VM', function () {
-    expect(fn () => Cluster::node('my')->createVirtualMachine([
+    expect(fn () => ProxmoxCluster::node('my')->createVirtualMachine([
         'vmid' => 101, 'image' => 'local:import/ubuntu.qcow2', 'storage' => 'local-lvm', 'disk' => 32,
     ], importTimeout: 0))->toThrow(InvalidArgumentException::class, 'importTimeout');
 

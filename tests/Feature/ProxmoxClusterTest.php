@@ -5,13 +5,13 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Proxmox\Exceptions\InvalidConfigurationException;
-use Proxmox\Facades\Cluster;
-use Proxmox\Models\Cluster as ClusterRecord;
+use Proxmox\Facades\ProxmoxCluster;
+use Proxmox\Models\Cluster;
 
 beforeEach(function () {
     $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
-    $this->cluster = ClusterRecord::query()->create([
+    $this->cluster = Cluster::query()->create([
         'name' => 'default',
         'url' => 'https://eu.example.test:8006/api2/json',
         'api_token_id' => 'laravel@pve!app',
@@ -47,9 +47,9 @@ it('applies connection defaults and preserves per-cluster TLS settings', functio
 });
 
 it('uses updated credentials when resolving the next connection', function () {
-    $first = Cluster::connection();
+    $first = ProxmoxCluster::connection();
     $this->cluster->update(['api_token_secret' => 'rotated-secret']);
-    $second = Cluster::connection();
+    $second = ProxmoxCluster::connection();
 
     Http::fake(['*' => Http::response(['data' => []])]);
     $second->nodes();
@@ -59,18 +59,18 @@ it('uses updated credentials when resolving the next connection', function () {
 });
 
 it('resolves renamed clusters without model event invalidation', function () {
-    $first = Cluster::connection();
-    ClusterRecord::query()->whereKey($this->cluster->id)->update(['name' => 'hetzner']);
+    $first = ProxmoxCluster::connection();
+    Cluster::query()->whereKey($this->cluster->id)->update(['name' => 'hetzner']);
 
-    expect(Cluster::connection('hetzner'))->not->toBe($first)
-        ->and(fn () => Cluster::connection('default'))->toThrow(InvalidConfigurationException::class);
+    expect(ProxmoxCluster::connection('hetzner'))->not->toBe($first)
+        ->and(fn () => ProxmoxCluster::connection('default'))->toThrow(InvalidConfigurationException::class);
 });
 
 it('rejects a deleted cluster even when deletion bypasses model events', function () {
-    Cluster::connection();
-    ClusterRecord::query()->whereKey($this->cluster->id)->delete();
+    ProxmoxCluster::connection();
+    Cluster::query()->whereKey($this->cluster->id)->delete();
 
-    expect(fn () => Cluster::connection())->toThrow(InvalidConfigurationException::class, 'does not exist');
+    expect(fn () => ProxmoxCluster::connection())->toThrow(InvalidConfigurationException::class, 'does not exist');
     Http::assertNothingSent();
 });
 

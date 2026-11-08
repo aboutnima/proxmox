@@ -8,8 +8,8 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Sleep;
 use Proxmox\Exceptions\UnexpectedResponseException;
-use Proxmox\Facades\Cluster;
-use Proxmox\Models\Cluster as ClusterRecord;
+use Proxmox\Facades\ProxmoxCluster;
+use Proxmox\Models\Cluster;
 use Proxmox\Resources\Tasks\Task;
 use Proxmox\Resources\VirtualMachines\VirtualMachine;
 
@@ -18,7 +18,7 @@ const API_URL = 'https://proxmox.example.test:8006/api2/json';
 beforeEach(function () {
     $this->loadMigrationsFrom(__DIR__.'/../../database/migrations');
 
-    $this->cluster = ClusterRecord::query()->create([
+    $this->cluster = Cluster::query()->create([
         'name' => 'default',
         'url' => API_URL,
         'api_token_id' => 'laravel@pam!package',
@@ -38,7 +38,7 @@ afterEach(function () {
 it('asks Proxmox for the next free VM ID', function (int|string $data, int $expected) {
     Http::fake([API_URL.'/cluster/nextid' => Http::response(['data' => $data])]);
 
-    expect(Cluster::nextVirtualMachineId())->toBe($expected);
+    expect(ProxmoxCluster::nextVirtualMachineId())->toBe($expected);
 })->with([
     [105, 105],
     ['105', 105],
@@ -49,7 +49,7 @@ it('asks Proxmox for the next free VM ID', function (int|string $data, int $expe
 it('rejects malformed next VM ID responses', function (mixed $data) {
     Http::fake(['*' => Http::response(['data' => $data])]);
 
-    expect(fn () => Cluster::nextVirtualMachineId())->toThrow(UnexpectedResponseException::class, 'VM ID');
+    expect(fn () => ProxmoxCluster::nextVirtualMachineId())->toThrow(UnexpectedResponseException::class, 'VM ID');
 })->with([null, '', '0', 'abc', [[101]], 1.5, 99, '99', 1000000000, '1000000000', '999999999999999999999999999999']);
 
 it('reads the configuration of a VM', function () {
@@ -58,7 +58,7 @@ it('reads the configuration of a VM', function () {
         API_URL.'/nodes/pve1/qemu/101/config' => Http::response(['data' => ['cores' => 2, 'memory' => '2048']]),
     ]);
 
-    $vm = Cluster::node('pve1')->virtualMachine(101)->refresh();
+    $vm = ProxmoxCluster::node('pve1')->virtualMachine(101)->refresh();
 
     expect($vm->config())->toBe(['cores' => 2, 'memory' => '2048'])
         ->and($vm->toArray())->toBe(['status' => 'running', 'vmid' => 101]);
@@ -72,7 +72,7 @@ it('grows a VM disk by a number of GiB and returns the resize task', function ()
         '*/resize' => Http::response(['data' => 'UPID:pve1:resize']),
     ]);
 
-    $vm = Cluster::node('pve1')->virtualMachine(101)->refresh();
+    $vm = ProxmoxCluster::node('pve1')->virtualMachine(101)->refresh();
     $task = $vm->growDisk(disk: 'scsi0', gibibytes: 10);
 
     expect($task)->toBeInstanceOf(Task::class)
@@ -90,7 +90,7 @@ it('grows a VM disk by a number of GiB and returns the resize task', function ()
 it('validates disk growth arguments before sending a resize request', function (string $disk, int $gibibytes, string $message) {
     Http::fake(['*/status/current' => Http::response(['data' => ['status' => 'running']])]);
 
-    $vm = Cluster::node('pve1')->virtualMachine(101);
+    $vm = ProxmoxCluster::node('pve1')->virtualMachine(101);
 
     expect(fn () => $vm->growDisk($disk, $gibibytes))
         ->toThrow(InvalidArgumentException::class, $message);
@@ -109,7 +109,7 @@ it('sets VM CPU cores and sockets and returns the configuration task', function 
         '*/config' => Http::response(['data' => 'UPID:pve1:qmconfig']),
     ]);
 
-    $vm = Cluster::node('pve1')->virtualMachine(101)->refresh();
+    $vm = ProxmoxCluster::node('pve1')->virtualMachine(101)->refresh();
     $task = $vm->setCpu(cores: 4, sockets: 2);
 
     expect($task)->toBeInstanceOf(Task::class)
@@ -130,7 +130,7 @@ it('keeps the current socket count when only setting VM CPU cores', function () 
         '*/config' => Http::response(['data' => 'UPID:pve1:qmconfig']),
     ]);
 
-    Cluster::node('pve1')->virtualMachine(101)->setCpu(4);
+    ProxmoxCluster::node('pve1')->virtualMachine(101)->setCpu(4);
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
         && $request->body() === 'cores=4');
@@ -142,7 +142,7 @@ it('sets VM memory in MiB and returns the configuration task', function () {
         '*/config' => Http::response(['data' => 'UPID:pve1:qmconfig']),
     ]);
 
-    $task = Cluster::node('pve1')->virtualMachine(101)->setMemory(mebibytes: 8192);
+    $task = ProxmoxCluster::node('pve1')->virtualMachine(101)->setMemory(mebibytes: 8192);
 
     expect($task->upid)->toBe('UPID:pve1:qmconfig');
 
@@ -158,7 +158,7 @@ it('runs VM power operations and returns their task', function (Closure $operati
         API_URL.'/nodes/pve1/qemu/101/status/'.$path => Http::response(['data' => 'UPID:pve1:power']),
     ]);
 
-    $vm = Cluster::node('pve1')->virtualMachine(101);
+    $vm = ProxmoxCluster::node('pve1')->virtualMachine(101);
     $task = $operation($vm);
 
     expect($task)->toBeInstanceOf(Task::class)
@@ -186,7 +186,7 @@ it('passes an optional timeout to graceful shutdown and restart', function (Clos
         API_URL.'/nodes/pve1/qemu/101/status/'.$path => Http::response(['data' => 'UPID:pve1:power']),
     ]);
 
-    $operation(Cluster::node('pve1')->virtualMachine(101));
+    $operation(ProxmoxCluster::node('pve1')->virtualMachine(101));
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
         && $request->url() === API_URL.'/nodes/pve1/qemu/101/status/'.$path
@@ -199,7 +199,7 @@ it('passes an optional timeout to graceful shutdown and restart', function (Clos
 it('rejects negative VM operation timeouts before sending the operation', function (Closure $operation) {
     Http::fake(['*/status/current' => Http::response(['data' => ['status' => 'running']])]);
 
-    expect(fn () => $operation(Cluster::node('pve1')->virtualMachine(101)))
+    expect(fn () => $operation(ProxmoxCluster::node('pve1')->virtualMachine(101)))
         ->toThrow(InvalidArgumentException::class, 'timeout');
 
     Http::assertNothingSent();
@@ -211,7 +211,7 @@ it('rejects negative VM operation timeouts before sending the operation', functi
 it('validates CPU and memory values before sending a configuration request', function (Closure $change, string $message) {
     Http::fake(['*/status/current' => Http::response(['data' => ['status' => 'running']])]);
 
-    $vm = Cluster::node('pve1')->virtualMachine(101);
+    $vm = ProxmoxCluster::node('pve1')->virtualMachine(101);
 
     expect(fn () => $change($vm))
         ->toThrow(InvalidArgumentException::class, $message);
@@ -231,7 +231,7 @@ it('requires a task ID from the VM configuration endpoint', function (mixed $dat
         '*/config' => Http::response(['data' => $data]),
     ]);
 
-    $vm = Cluster::node('pve1')->virtualMachine(101);
+    $vm = ProxmoxCluster::node('pve1')->virtualMachine(101);
 
     expect(fn () => $vm->setMemory(4096))
         ->toThrow(UnexpectedResponseException::class, 'task ID');
@@ -240,7 +240,7 @@ it('requires a task ID from the VM configuration endpoint', function (mixed $dat
 it('creates a VM from an array through its node-scoped operations', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:pve1:create'])]);
 
-    $node = Cluster::node('pve1');
+    $node = ProxmoxCluster::node('pve1');
 
     Http::assertNothingSent();
 
@@ -293,7 +293,7 @@ it('creates a VM from an array through its node-scoped operations', function () 
 it('accepts integer or string VM IDs when creating a VM', function (int|string $vmid) {
     Http::fake(['*' => Http::response(['data' => 'UPID:pve1:create'])]);
 
-    $task = Cluster::node('pve1')->createVirtualMachine(['vmid' => $vmid]);
+    $task = ProxmoxCluster::node('pve1')->createVirtualMachine(['vmid' => $vmid]);
 
     expect($task->node)->toBe('pve1')
         ->and($task->upid)->toBe('UPID:pve1:create');
@@ -306,7 +306,7 @@ it('accepts integer or string VM IDs when creating a VM', function (int|string $
 it('creates a VM using the exact static IP settings in its array', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:pve1:create'])]);
 
-    Cluster::node('pve1')->createVirtualMachine([
+    ProxmoxCluster::node('pve1')->createVirtualMachine([
         'vmid' => 101,
         'storage' => 'local-lvm',
         'bridge' => 'vmbr0',
@@ -319,14 +319,14 @@ it('creates a VM using the exact static IP settings in its array', function () {
 });
 
 it('rejects invalid VM IDs before submitting creation', function (mixed $vmid) {
-    expect(fn () => Cluster::node('pve1')->createVirtualMachine(['vmid' => $vmid]))
+    expect(fn () => ProxmoxCluster::node('pve1')->createVirtualMachine(['vmid' => $vmid]))
         ->toThrow(InvalidArgumentException::class, 'VM ID');
 
     Http::assertNothingSent();
 })->with([0, 99, 1_000_000_000, '0101', 'abc', null, '', 1.5]);
 
 it('requires a VM ID before submitting creation', function () {
-    expect(fn () => Cluster::node('pve1')->createVirtualMachine([]))
+    expect(fn () => ProxmoxCluster::node('pve1')->createVirtualMachine([]))
         ->toThrow(InvalidArgumentException::class, 'VM ID');
 
     Http::assertNothingSent();
@@ -339,7 +339,7 @@ it('imports, waits and resizes a VM created from array configuration', function 
         API_URL.'/nodes/pve1/qemu/101/resize' => Http::response(['data' => 'UPID:pve1:resize']),
     ]);
 
-    $task = Cluster::node('pve1')->createVirtualMachine([
+    $task = ProxmoxCluster::node('pve1')->createVirtualMachine([
         'vmid' => 101,
         'storage' => 'local-lvm',
         'image' => 'local:import/ubuntu.qcow2',
@@ -364,7 +364,7 @@ it('lists and creates VMs through the same node without mutating earlier data', 
         ->push(['data' => [['vmid' => 101], ['vmid' => 102]]]),
     ]);
 
-    $node = Cluster::node('pve1');
+    $node = ProxmoxCluster::node('pve1');
     Http::assertNothingSent();
 
     $original = $node->virtualMachines();
@@ -388,7 +388,7 @@ it('supports consumer collection operations on a single fetched list', function 
         ['node' => 'pve3', 'status' => 'online', 'maxmem' => 32],
     ]])]);
 
-    $nodes = collect(Cluster::nodes());
+    $nodes = collect(ProxmoxCluster::nodes());
 
     expect($nodes->count())->toBe(3)
         ->and($nodes->pluck('node')->all())->toBe(['pve1', 'pve2', 'pve3'])
@@ -408,7 +408,7 @@ it('leaves membership filtering to consumer collections', function () {
         ['node' => 'pve3', 'status' => 'unknown'],
     ]])]);
 
-    $nodes = collect(Cluster::nodes());
+    $nodes = collect(ProxmoxCluster::nodes());
 
     expect($nodes->whereIn('status', ['online', 'unknown'])->pluck('node')->all())->toBe(['pve1', 'pve3'])
         ->and($nodes->whereNotIn('status', ['online'])->pluck('node')->all())->toBe(['pve2', 'pve3']);
@@ -422,7 +422,7 @@ it('leaves conditional filtering to consumer collections', function (bool $onlin
         ['node' => 'pve2', 'status' => 'offline'],
     ]])]);
 
-    $nodes = collect(Cluster::nodes())
+    $nodes = collect(ProxmoxCluster::nodes())
         ->when($onlineOnly, fn (Collection $items) => $items->where('status', 'online'));
 
     expect($nodes->pluck('node')->all())->toBe($expected);
@@ -438,7 +438,7 @@ it('returns arrays that consumers can filter with native PHP', function () {
         ['node' => 'pve2', 'status' => 'offline'],
     ]])]);
 
-    $nodes = Cluster::nodes();
+    $nodes = ProxmoxCluster::nodes();
     $online = array_values(array_filter($nodes, fn (array $node): bool => $node['status'] === 'online'));
 
     expect($online)->toBe([['node' => 'pve1', 'status' => 'online']])
@@ -450,7 +450,7 @@ it('returns arrays that consumers can filter with native PHP', function () {
 it('keeps consumer collection changes local', function () {
     Http::fake(['*' => Http::response(['data' => [['node' => 'pve1']]])]);
 
-    $data = Cluster::nodes();
+    $data = ProxmoxCluster::nodes();
     $nodes = collect($data);
     $nodes->push(['node' => 'pve9']);
 
