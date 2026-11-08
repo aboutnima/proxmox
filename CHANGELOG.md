@@ -4,7 +4,7 @@
 
 ### Added
 
-- `Proxmox\Facades\Cluster` for named API connections, such as `Cluster::connection('hetzner')->nodes()`.
+- `Proxmox\Facades\ProxmoxCluster` for named API connections, such as `ProxmoxCluster::connection('hetzner')->nodes()`.
 - A single cluster connection registry with encrypted token secrets and per-connection HTTP/TLS settings.
 - Configurable cluster models through `proxmox.model`, used for connection lookup, cluster creation, duplicate checks, and the `about` listing. Custom models extend `Proxmox\Models\Cluster`.
 - `php artisan proxmox:install [--migrate]` for repeatable configuration and migration publication, and `php artisan proxmox:create-cluster` for interactive connection setup.
@@ -13,9 +13,9 @@
 
 - **Breaking:** connection lookups reload stored settings and build fresh clients every time. Runtime `connectUsing()` clients are standalone and do not register or override named connections.
 - **Breaking:** stored clusters are the standard connection source. Removed the `api` / `inventory` modes, configuration-backed connection lists, and inventory model configuration. `config/proxmox.php` contains the default connection name and cluster model class.
-- **Breaking:** replace the `Proxmox` facade import with `Proxmox\Facades\Cluster`.
+- **Breaking:** replace the `Proxmox\Facades\Cluster` or `Proxmox\Facades\Proxmox` facade import with `Proxmox\Facades\ProxmoxCluster`. The auto-discovered alias is now `ProxmoxCluster`; the Eloquent model remains `Proxmox\Models\Cluster`.
 - **Breaking:** `node($name)->virtualMachines()` fetches a plain array immediately. Replace `virtualMachines()->all()` with `virtualMachines()` and `virtualMachines()->create($configuration)` with `node($name)->createVirtualMachine($configuration)`.
-- Node and VM persistence, customer ownership, caching, and reconciliation are application responsibilities. Package migrations create only `proxmox_clusters`; existing published migrations and data are left untouched.
+- Node and VM persistence, customer ownership, caching, and reconciliation are application responsibilities. Package migrations create only `clusters`; existing published migrations and data are left untouched.
 - Live node/VM resources are independent of Eloquent. VM refresh and serialization use an in-memory status snapshot; remote management methods do not read or write application records.
 - Existing live API functionality remains available: native/readable VM creation, cloud-image imports, power operations, configuration changes, metrics, history, snapshots, and background tasks.
 
