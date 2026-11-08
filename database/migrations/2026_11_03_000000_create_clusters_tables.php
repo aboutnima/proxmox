@@ -10,7 +10,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('proxmox_clusters', function (Blueprint $table): void {
+        Schema::create('clusters', function (Blueprint $table): void {
             $table->id();
             $table->string('name')->unique();
             $table->string('url');
@@ -28,6 +28,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('proxmox_clusters');
+        Schema::dropIfExists('clusters');
     }
 };
