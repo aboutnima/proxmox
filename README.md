@@ -5,33 +5,25 @@
 [![Tests](https://img.shields.io/github/actions/workflow/status/aboutnima/proxmox/tests.yml?branch=main&label=Tests&style=flat-square)](https://github.com/aboutnima/proxmox/actions/workflows/tests.yml)
 [![License](https://img.shields.io/github/license/aboutnima/proxmox?style=flat-square)](LICENSE.md)
 
-A Laravel package for the Proxmox VE REST API. Manage QEMU virtual machines through a fluent, node-scoped API, monitor resources, and track background tasks using Laravel's HTTP client.
+A Laravel package for the Proxmox VE REST API. Store named cluster connections with encrypted API credentials, fetch live nodes and QEMU virtual machines, and manage VMs through a fluent API.
 
-Use it with connections in your application's configuration, or enable inventory mode to store clusters, nodes, virtual machines, and VM ownership in your database.
-
-- API token authentication, named connections, custom certificate authorities, and configurable timeouts.
-- VM creation from native QEMU parameters or readable fields, including QCOW2 cloud images and Cloud-Init.
-- Power operations, CPU and memory changes, disk growth, and VM destruction.
-- Runtime snapshots, guest information, resource summaries, and usage history.
-- Optional Eloquent inventory with encrypted credentials, node synchronization, and polymorphic owners.
+The package owns one table: `proxmox_clusters`. Applications decide how to store, cache, authorize, and display node and VM data. Node and VM API resources hold no database records or ownership relations.
 
 ## Contents
 
 - [Requirements](#requirements)
-- [Installation and quick start](#installation-and-quick-start)
-- [Configuration](#configuration)
-- [Multiple connections](#multiple-connections)
+- [Installation](#installation)
+- [Cluster connections](#cluster-connections)
 - [Reading nodes and virtual machines](#reading-nodes-and-virtual-machines)
 - [Resources and usage history](#resources-and-usage-history)
 - [Managing virtual machines](#managing-virtual-machines)
 - [Creating virtual machines](#creating-virtual-machines)
 - [Background tasks](#background-tasks)
-- [Inventory mode](#inventory-mode)
+- [Application storage](#application-storage)
 - [Raw HTTP requests](#raw-http-requests)
 - [Error handling](#error-handling)
 - [Testing](#testing)
 - [Upgrading](#upgrading)
-- [Contributing](#contributing)
 
 ## Requirements
 
@@ -39,149 +31,152 @@ Use it with connections in your application's configuration, or enable inventory
 | --- | --- |
 | PHP | `^8.3` |
 | Laravel | `^12.0` or `^13.0`, with a compatible PHP version |
+| Database | A Laravel-supported database for cluster connections |
+| Encryption | An application encryption key for stored API token secrets |
 | Proxmox | A reachable Proxmox VE JSON API and an API token permitted to perform your operations |
-| Database | Required only for inventory mode |
 
-The resource API manages QEMU VMs. For other Proxmox endpoints, use the [raw HTTP client](#raw-http-requests).
+The resource API manages QEMU VMs. Use the raw HTTP client for other Proxmox endpoints.
 
-## Installation and quick start
-
-Install the package in your Laravel application:
+## Installation
 
 ```bash
 composer require aboutnima/proxmox
-php artisan proxmox:install --mode=api
+php artisan proxmox:install --migrate
+php artisan proxmox:create-cluster hetzner
 ```
 
-Laravel discovers the service provider and facade automatically. The installer publishes `config/proxmox.php` and sets `PROXMOX_MODE` in your application's `.env` file.
+Laravel discovers the service provider and the `Cluster` facade. The installer publishes `config/proxmox.php` and one migration that creates `proxmox_clusters`. With `--migrate`, it runs Laravel's pending migrations. Without the flag, you can run `php artisan migrate` separately.
 
-Add your connection settings to `.env`. Include `/api2/json` in the URL:
-
-```dotenv
-PROXMOX_MODE=api
-PROXMOX_CONNECTION=default
-PROXMOX_URL=https://proxmox.example.com:8006/api2/json
-PROXMOX_API_TOKEN_ID="laravel@pve!app"
-PROXMOX_API_TOKEN_SECRET=your-token-secret
-```
-
-List your nodes and inspect a VM, replacing the node name and VMID with your own:
+The cluster command prompts for the API URL, token identifier, and token secret. Include `/api2/json` in the URL, for example `https://proxmox.example.com:8006/api2/json`. The secret is entered through a hidden prompt.
 
 ```php
-use Proxmox\Facades\Proxmox;
+use Proxmox\Facades\Cluster;
 
-$nodes = Proxmox::nodes();
-
-$node = Proxmox::node('pve1');
-$virtualMachines = $node->virtualMachines()->all();
-
-$vm = $node->virtualMachine(101);
-$status = $vm->status();
-$configuration = $vm->config();
+$connection = Cluster::connection('hetzner');
+$nodes = $connection->nodes();
+$vms = $connection->node('pve1')->virtualMachines();
 ```
 
-Run `php artisan proxmox:install` without `--mode` to choose interactively:
+Node selection uses the Proxmox node name, such as `pve1`. Listings return plain arrays with the API's `data` envelope removed. Empty listings return `[]`.
 
-| Mode | Connection source | Setup |
-| --- | --- | --- |
-| `api` (default) | `config/proxmox.php`, usually populated from `.env` | Publishes configuration; no database setup |
-| `inventory` | Clusters stored in `proxmox_clusters` | Also publishes inventory migrations; see [inventory mode](#inventory-mode) |
-
-Running the installer again preserves existing configuration and skips migrations that are already published. If configuration is cached, run `php artisan config:cache` after changing the mode or environment settings.
-
-To publish configuration manually:
+Rerunning the installer preserves existing configuration and skips migrations that have already been published. You can also publish the files manually:
 
 ```bash
 php artisan vendor:publish --tag=proxmox-config
+php artisan vendor:publish --tag=proxmox-migrations
 ```
 
-## Configuration
+Use the installer for repeatable migration publication.
 
-The default connection reads these environment variables:
+## Cluster connections
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `PROXMOX_MODE` | `api` | Selects `api` or `inventory` mode |
-| `PROXMOX_CONNECTION` | `default` | Default connection name, or database cluster name in inventory mode |
-| `PROXMOX_URL` | Empty | API base URL, including `/api2/json` |
-| `PROXMOX_API_TOKEN_ID` | Empty | Token identifier in `user@realm!token` form |
-| `PROXMOX_API_TOKEN_SECRET` | Empty | API token secret |
-| `PROXMOX_TIMEOUT` | `30` | HTTP request timeout in seconds |
-| `PROXMOX_CONNECT_TIMEOUT` | `10` | Connection timeout in seconds |
-| `PROXMOX_VERIFY_SSL` | `true` | Whether to verify the server's TLS certificate |
-| `PROXMOX_CA_BUNDLE` | Unset | CA certificate file path or PEM certificate contents |
-| `PROXMOX_RETRY_TIMES` | `0` | Extra GET attempts after a connection failure |
-| `PROXMOX_RETRY_SLEEP` | `100` | Delay between GET attempts in milliseconds |
+### Store and list connections
 
-URL, token, and timeout settings are validated when a request is made, so missing credentials do not prevent the application from booting. Request and connection timeouts must be positive integers.
+Create a stored connection through the command:
 
-Retries apply only to GET requests after connection failures. HTTP error responses and write requests are never retried automatically.
-
-### TLS certificates
-
-Keep certificate verification enabled. For a private Proxmox CA, place its certificate on your application server and configure its path:
-
-```dotenv
-PROXMOX_CA_BUNDLE=/absolute/path/to/pve-root-ca.pem
+```bash
+php artisan proxmox:create-cluster hetzner \
+    --url=https://proxmox.example.com:8006/api2/json \
+    --token-id='laravel@pve!app' \
+    --ca-bundle=/absolute/path/to/pve-root-ca.pem
 ```
 
-You can also pass PEM certificate contents as a connection's `ca_bundle`. Inline PEM certificates require cURL support for `CURLOPT_CAINFO_BLOB`. The CA bundle is ignored when `verify_ssl` is `false`.
+The command accepts `--timeout=30`, `--connect-timeout=10`, and `--insecure`. The API token secret is prompted for interactively; it has no command-line option. The command validates unique cluster names containing 1–100 letters, numbers, hyphens, or underscores. A CA file supplied to the command is stored as PEM contents. Validate application-managed input before saving connection records through Eloquent.
 
-Run `php artisan about` to inspect the package mode, default connection, and available connection names without displaying token secrets.
-
-## Multiple connections
-
-Add named entries under `connections` in `config/proxmox.php`. Each entry accepts the same settings as `default`; map additional environment variables explicitly:
+For application-managed setup, use the package's only Eloquent model. Import it as `ClusterRecord` to distinguish it from the `Cluster` facade:
 
 ```php
-// Inside the connections array in config/proxmox.php:
-'backup' => [
-    'url' => env('PROXMOX_BACKUP_URL'),
-    'api_token_id' => env('PROXMOX_BACKUP_API_TOKEN_ID'),
-    'api_token_secret' => env('PROXMOX_BACKUP_API_TOKEN_SECRET'),
-    'timeout' => 30,
-    'connect_timeout' => 10,
-    'verify_ssl' => true,
-    'ca_bundle' => env('PROXMOX_BACKUP_CA_BUNDLE'),
-    'retry' => ['times' => 0, 'sleep' => 100],
-],
-```
+use Proxmox\Models\Cluster as ClusterRecord;
 
-Select a connection by name:
-
-```php
-use Proxmox\Facades\Proxmox;
-
-$backup = Proxmox::connection('backup');
-$nodes = $backup->nodes();
-$vm = $backup->node('pve1')->virtualMachine(101);
-```
-
-Facade calls without `connection()` use `PROXMOX_CONNECTION`. Resolving or injecting `Proxmox\Proxmox` also gives you the default connection.
-
-For connection settings supplied by your application at runtime:
-
-```php
-$client = Proxmox::connectUsing('lab', [
-    'url' => 'https://lab.example.com:8006/api2/json',
+$cluster = ClusterRecord::query()->create([
+    'name' => 'hetzner',
+    'url' => 'https://proxmox.example.com:8006/api2/json',
     'api_token_id' => 'laravel@pve!app',
     'api_token_secret' => $secret,
 ]);
 
-$nodes = $client->nodes();
+$clusters = ClusterRecord::query()->get(['id', 'name']);
 ```
 
-Clients are cached by name. After changing configuration in a running process, call `Proxmox::purge('backup')` to rebuild that connection on its next use. `connectUsing()` replaces the cached client for its name. `Proxmox::setDefaultConnection('backup')` changes the default for the current application instance.
+Saving or deleting a connection record never calls Proxmox. API token secrets use Laravel's `encrypted` cast and are hidden from model arrays and JSON. Retain the encryption keys needed to read them.
+
+The public classes have separate responsibilities:
+
+| Class | Responsibility |
+| --- | --- |
+| `Proxmox\Facades\Cluster` | Resolve a named or default API connection |
+| `Proxmox\Models\Cluster` | Store connection credentials and HTTP settings with Eloquent |
+| `Proxmox\Proxmox` | Send authenticated HTTP requests and select live node/task contexts |
+| `Proxmox\Resources\Nodes\Node` | Fetch node data and select, create, or list remote VMs |
+| `Proxmox\Resources\VirtualMachines\VirtualMachine` | Read and manage a remote VM, with an optional in-memory status snapshot |
+| `Proxmox\Resources\Tasks\Task` | Inspect or wait for remote background work |
+
+Fetching nodes or VMs never creates local records. VM creation and deletion affect Proxmox; applications persist their own service records separately.
+
+### Connection settings
+
+Each record stores these settings:
+
+| Field | Default | Purpose |
+| --- | --- | --- |
+| `name` | Required | Unique connection name |
+| `url` | Required | API base URL, including `/api2/json` |
+| `api_token_id` | Required | Token identifier in `user@realm!token` form |
+| `api_token_secret` | Required | Encrypted API token secret |
+| `timeout` | `30` | HTTP request timeout in seconds |
+| `connect_timeout` | `10` | Connection timeout in seconds |
+| `verify_ssl` | `true` | Verify the server's TLS certificate |
+| `ca_bundle` | `null` | CA certificate file path or PEM contents |
+| `retry_times` | `0` | Extra GET attempts after connection failures |
+| `retry_sleep` | `100` | Delay between retry attempts in milliseconds |
+
+Keep certificate verification enabled. For a private Proxmox CA, set `ca_bundle` to a CA file path or PEM certificate. Inline PEM certificates require cURL support for `CURLOPT_CAINFO_BLOB`. The bundle is ignored when `verify_ssl` is `false`.
+
+Timeouts must be positive. Retries apply only to GET requests after connection failures; writes and HTTP error responses are never retried automatically. Required HTTP settings are validated when a request is made.
+
+### Default and runtime connections
+
+`config/proxmox.php` contains the default stored connection name, initially `default`. Set it in your environment:
+
+```dotenv
+PROXMOX_CONNECTION=hetzner
+```
+
+```php
+use Proxmox\Facades\Cluster;
+
+$connection = Cluster::connection(); // Uses PROXMOX_CONNECTION.
+$backup = Cluster::connection('backup');
+```
+
+Facade shortcuts such as `Cluster::nodes()` and injecting `Proxmox\Proxmox` use the default connection. If configuration is cached, rebuild it after changing `PROXMOX_CONNECTION`.
+
+Clients are cached by connection name in the current application instance. Saving or deleting a `ClusterRecord` clears its cached client for the next resolution. After bulk updates or changes made by another process, use `Cluster::purge('hetzner')` before resolving the connection again. Existing client variables retain their original settings.
+
+For temporary connections or tests, supply settings directly:
+
+```php
+$connection = Cluster::connectUsing('temporary', [
+    'url' => 'https://lab.example.com:8006/api2/json',
+    'api_token_id' => 'laravel@pve!app',
+    'api_token_secret' => $secret,
+]);
+```
+
+`connectUsing()` replaces the cached client for its name without saving a database record. It accepts `timeout`, `connect_timeout`, `verify_ssl`, `ca_bundle`, and `retry` (`times` and `sleep`). `Cluster::getConnections()` returns resolved clients; query `ClusterRecord` to list all stored connections. `Cluster::setDefaultConnection('backup')` changes the default for the current application instance.
+
+Run `php artisan about --only=proxmox` to inspect connection names without displaying secrets.
 
 ## Reading nodes and virtual machines
 
 Listing methods fetch immediately and return plain arrays with the API's `data` envelope removed:
 
 ```php
-use Proxmox\Facades\Proxmox;
+use Proxmox\Facades\Cluster;
 
-$nodes = Proxmox::nodes();
-$vms = Proxmox::node('pve1')->virtualMachines()->all();
+$connection = Cluster::connection('hetzner');
+$nodes = $connection->nodes();
+$vms = $connection->node('pve1')->virtualMachines();
 
 $onlineNodes = collect($nodes)->where('status', 'online')->pluck('node');
 $runningVms = collect($vms)->where('status', 'running')->values()->all();
@@ -189,22 +184,24 @@ $runningVms = collect($vms)->where('status', 'running')->values()->all();
 
 Empty listings return `[]`. Collection operations filter the fetched data locally without additional requests. VM listing rows contain summary fields; fetch an individual VM for its runtime status and management methods.
 
-### VM snapshots
+### VM API resources and snapshots
+
+Selecting a node or VM returns an API resource. `refresh()` fetches an in-memory status snapshot; `toArray()` and JSON serialize that snapshot. These operations do not read or write application node/VM records.
 
 ```php
-$node = Proxmox::node('pve1');             // Selects a node without an HTTP request.
-$operations = $node->virtualMachines();   // Selects VM operations without an HTTP request.
+$node = Cluster::connection('hetzner')->node('pve1');
+$vm = $node->virtualMachine(101); // No HTTP request yet.
 
-$vm = $node->virtualMachine(101);        // Selects a VM without an HTTP request.
-$current = $vm->status();                // Fetches status; leaves the snapshot unchanged.
-$vm->refresh();                          // Fetches status and replaces the snapshot.
-$snapshot = $vm->toArray();              // Uses the stored snapshot.
-$response = response()->json($vm);       // Serializes the same snapshot.
-$configuration = $vm->config();          // Fetches VM configuration separately.
-$nodeStatus = $node->status();            // Fetches node status.
+$current = $vm->status(); // Fetches status; leaves the snapshot unchanged.
+$vm->refresh();           // Fetches status and replaces the in-memory snapshot.
+$snapshot = $vm->toArray();
+$response = response()->json($vm);
+
+$configuration = $vm->config();
+$nodeStatus = $node->status();
 ```
 
-`virtualMachine($vmid)` returns a `Proxmox\Resources\VirtualMachines\VirtualMachineResource` without fetching it. Its snapshot is initially empty; call `refresh()` to populate it. VM resources expose their selected `$vm->node` and `$vm->vmid`. Power and configuration operations leave the stored snapshot unchanged.
+`virtualMachine($vmid)` returns a `Proxmox\Resources\VirtualMachines\VirtualMachine` without fetching it. Its snapshot is initially empty; call `refresh()` to populate it. VM resources expose their selected `$vm->node` and `$vm->vmid`. Power and configuration operations leave the in-memory snapshot unchanged.
 
 Unwrapped API attributes have associative keys sorted alphabetically at every nesting level. List order and field values are preserved, including in VM snapshots and JSON.
 
@@ -235,7 +232,8 @@ $startup = $vm->startup();
 Use categorized resource methods for dashboards and capacity information:
 
 ```php
-$vm = Proxmox::node('pve1')->virtualMachine(101);
+$connection = Cluster::connection('hetzner');
+$vm = $connection->node('pve1')->virtualMachine(101);
 
 $status = $vm->status();
 $usage = $vm->usage(status: $status);
@@ -243,7 +241,7 @@ $allocation = $vm->allocatedResources();
 $available = $vm->availableResources(status: $status);
 $startup = $vm->startup(status: $status);
 
-$node = Proxmox::node('pve1');
+$node = $connection->node('pve1');
 $capacity = $node->resources();
 $storages = $node->storages('images');
 ```
@@ -299,7 +297,7 @@ The individual methods and `usageHistory()` accept `timeframe` (`hour`, `day`, `
 All power and configuration operations return a `Proxmox\Resources\Tasks\Task`. Call `wait()` when subsequent work depends on completion:
 
 ```php
-$vm = Proxmox::node('pve1')->virtualMachine(101);
+$vm = Cluster::connection('hetzner')->node('pve1')->virtualMachine(101);
 
 $vm->start()->wait();
 $vm->shutdown(timeout: 60)->wait();
@@ -345,19 +343,19 @@ if (($vm->status()['status'] ?? null) !== 'stopped') {
 $vm->delete()->wait();
 ```
 
-`delete(bool $purge = true)` destroys the VM and its unreferenced disks. With `purge: true`, it also requests removal from backup jobs, replication, and HA. Passing `purge: false` still destroys the VM and disks. In inventory mode, delete the database record separately after remote destruction succeeds.
+`delete(bool $purge = true)` destroys the VM and its unreferenced disks. With `purge: true`, it also requests removal from backup jobs, replication, and HA. Passing `purge: false` still destroys the VM and disks. Applications that store server records should update them separately after remote destruction succeeds.
 
 ## Creating virtual machines
 
-Pass a configuration array to a node's `virtualMachines()->create()` method:
+Pass a configuration array to a node's `createVirtualMachine()` method:
 
 ```php
-use Proxmox\Facades\Proxmox;
+use Proxmox\Facades\Cluster;
 
-$client = Proxmox::connection();
+$client = Cluster::connection('hetzner');
 $vmid = $client->nextVirtualMachineId();
 
-$task = $client->node('pve1')->virtualMachines()->create([
+$task = $client->node('pve1')->createVirtualMachine([
     'vmid' => $vmid,
     'name' => 'web-'.$vmid,
     'sockets' => 1,
@@ -375,7 +373,7 @@ This creates a VM with an empty disk. Use a cloud image or native installation p
 
 ### Readable configuration fields
 
-Additional native QEMU parameters are passed through to Proxmox. The package translates these readable fields:
+The method accepts the common fields below and passes additional native QEMU parameters through to Proxmox. Readable disk, network, image, and credential fields are translated to native parameters:
 
 | Field | Meaning and dependencies |
 | --- | --- |
@@ -415,7 +413,7 @@ Readable Cloud-Init fields also conflict with an explicit `ide2`. Native credent
 List QCOW2 sources on Proxmox storage with the `import` content type enabled:
 
 ```php
-$images = Proxmox::node('pve1')->images('local');
+$images = Cluster::connection('hetzner')->node('pve1')->images('local');
 $volumeIds = collect($images)->pluck('volid');
 ```
 
@@ -423,10 +421,10 @@ The source file must already exist on Proxmox storage. Use its volume ID as `ima
 
 ```php
 // $publicKey contains the text of an OpenSSH public key.
-$client = Proxmox::connection();
+$client = Cluster::connection('hetzner');
 $vmid = $client->nextVirtualMachineId();
 
-$task = $client->node('pve1')->virtualMachines()->create([
+$task = $client->node('pve1')->createVirtualMachine([
     'vmid' => $vmid,
     'name' => 'ubuntu-'.$vmid,
     'cores' => 2,
@@ -450,13 +448,13 @@ The image must be an import volume such as `local:import/ubuntu.qcow2`. A downlo
 
 Task behavior depends on the fields supplied:
 
-| Configuration | What `create()` returns |
+| Configuration | What `createVirtualMachine()` returns |
 | --- | --- |
 | Without `image` | The VM creation task |
 | `image` without `disk` | The creation/import task; retains the image's virtual disk size |
 | Both `image` and `disk` | Waits for import, submits an absolute-size disk resize, and returns the resize task |
 
-With `image` and `disk`, `create()` blocks while waiting for import, up to `importTimeout` seconds (default `300`). Run this workflow in a queued job. Wait for the returned resize task before starting the VM; enabling `start` in this configuration is rejected. The requested disk size must be at least the image's virtual disk size.
+With `image` and `disk`, `createVirtualMachine()` blocks while waiting for import, up to `importTimeout` seconds (default `300`). Run this workflow in a queued job. Wait for the returned resize task before starting the VM; enabling `start` in this configuration is rejected. The requested disk size must be at least the image's virtual disk size.
 
 HTTP request timeouts, the import wait timeout, and a returned task's wait timeout are separate settings. Failed or timed-out provisioning does not cancel remote tasks or automatically delete a VM. Inspect Proxmox before retrying a failed operation.
 
@@ -481,272 +479,52 @@ $task->wait(timeout: 300, interval: 1);
 Rebuild a task from a saved UPID using the connection that created it:
 
 ```php
-$task = Proxmox::connection('backup')->task($upid);
+$task = Cluster::connection('backup')->task($upid);
 $task->wait();
 
 // Or select the node explicitly:
-$task = Proxmox::connection('backup')->node('pve1')->task($upid);
+$task = Cluster::connection('backup')->node('pve1')->task($upid);
 ```
 
 `task($upid)` reads the node from the full `UPID:node:...` value. Casting a task to a string returns its UPID. Save the connection name alongside the UPID when tracking work across multiple clusters.
 
 Tasks with exit status `OK` or `WARNINGS: n` count as successful. Other exit statuses raise `TaskFailedException`. A polling timeout raises `TaskTimeoutException` and leaves the remote task running.
 
-## Inventory mode
+## Application storage
 
-Inventory mode adds database records for clusters, nodes, and VM ownership while using the same API resources for live operations.
-
-```bash
-php artisan proxmox:install --mode=inventory --migrate
-```
-
-The installer publishes a single `create_proxmox_tables` migration and, with `--migrate`, runs Laravel's pending migrations. Without that flag, you can run `php artisan migrate` separately. For manual publication, use `php artisan vendor:publish --tag=proxmox-migrations`; use the installer for repeatable setup that skips already-published migrations.
-
-| Table | Contents |
-| --- | --- |
-| `proxmox_clusters` | Named connections, encrypted API token secrets, HTTP/TLS/retry settings, and `is_active` |
-| `proxmox_nodes` | Cluster nodes, unique by cluster and name, with their last synchronized status |
-| `proxmox_virtual_machines` | VM lifecycle records with cluster, current node, VMID, optional name/status, polymorphic owner, and soft deletes |
-
-In this mode, named connections resolve clusters from the database. Entries under `proxmox.connections` are not used for normal connection resolution. Set `PROXMOX_CONNECTION` to an existing cluster name if it differs from `default`.
-
-### Adding clusters
-
-Create a cluster interactively:
-
-```bash
-php artisan proxmox:create-cluster default
-```
-
-You can provide non-secret settings as options; the API token secret is requested through a hidden prompt:
-
-```bash
-php artisan proxmox:create-cluster eu-1 \
-    --url=https://eu.example.com:8006/api2/json \
-    --token-id='laravel@pve!app' \
-    --ca-bundle=/absolute/path/to/pve-root-ca.pem
-```
-
-Supported options include `--timeout=30`, `--connect-timeout=10`, `--inactive`, and `--insecure` to disable TLS verification. There is no token-secret command-line option. Cluster names must contain 1–100 letters, numbers, hyphens, or underscores and must be unique.
-
-Move an existing configured connection into inventory:
-
-```bash
-php artisan proxmox:create-cluster default --from-env
-php artisan proxmox:create-cluster eu-1 --from-env --connection=default
-```
-
-`--from-env` reads `config/proxmox.php`, including environment-backed values, and copies the selected connection. Its default source name is the new cluster name. Remove copied token secrets from `.env` once they are stored in inventory.
-
-Use a stored cluster through the facade or its model:
+Nodes, VMs, customer ownership, and service lifecycles belong to the consuming application. Fetch arrays and store or cache the fields your application needs:
 
 ```php
-use Proxmox\Facades\Proxmox;
-use Proxmox\Models\Cluster;
+use Illuminate\Support\Facades\Cache;
+use Proxmox\Facades\Cluster;
 
-$nodes = Proxmox::connection('eu-1')->nodes();
+$connection = Cluster::connection('hetzner');
+$nodes = Cache::remember('proxmox:hetzner:nodes', now()->addMinute(), fn () => $connection->nodes());
 
-$cluster = Cluster::query()->where('name', 'eu-1')->firstOrFail();
-$vms = $cluster->client()->node('pve1')->virtualMachines()->all();
+// An application-owned server record provides the routing information.
+$vm = Cluster::connection($server->proxmox_connection)
+    ->node($server->proxmox_node)
+    ->virtualMachine($server->proxmox_vmid);
 
-$activeClusters = Cluster::query()->active()->get();
-$cluster->update(['is_active' => false]);
+$status = $vm->status();
 ```
 
-Saving or deleting a cluster model clears its cached connection for the next resolution. `is_active` is an application selection flag; inactive clusters remain accessible by name. Node synchronization with `--all` selects active clusters only.
+The `$server` above is an application-defined record; its field names and relations are your choice. Save connection names, node names, VMIDs, and any business fields your application needs. Cache returned arrays rather than connection or resource objects.
 
-### Stored credentials
-
-`api_token_secret` uses Laravel's `encrypted` cast and is hidden from model arrays and JSON. Keep `APP_KEY` available to every application instance that reads these records, and retain the necessary keys when rotating encryption keys. Losing the encryption key prevents decryption of stored secrets.
-
-`--ca-bundle` reads the certificate file and stores its PEM contents with the cluster, so other application instances do not need the original file. Inline certificate verification requires the cURL support described in [TLS certificates](#tls-certificates).
-
-### Synchronizing nodes
-
-```bash
-php artisan proxmox:sync-nodes
-php artisan proxmox:sync-nodes eu-1 us-1
-php artisan proxmox:sync-nodes --all
-```
-
-Without arguments, the command prompts for clusters and preselects active ones. Named clusters are synchronized even when inactive. `--all` synchronizes every active cluster and supports non-interactive scheduling:
-
-```php
-// routes/console.php
-use Illuminate\Support\Facades\Schedule;
-
-Schedule::command('proxmox:sync-nodes --all')
-    ->everyFiveMinutes()
-    ->withoutOverlapping();
-```
-
-New nodes are added and existing nodes receive the status returned by Proxmox. Nodes absent from a listing are retained with `Proxmox\Models\Node::MISSING` (`missing`) because VM records may still refer to them. Reappearing nodes receive their current remote status.
-
-Call `$cluster->syncNodes()` in application code to receive node names grouped under `added`, `updated`, `unchanged`, and `missing`. Invalid listings leave that cluster's node inventory unchanged. If a cluster fails during the command, processing continues for the others and the command exits with a failure code. This command synchronizes nodes; VM inventory is recorded explicitly.
-
-### VM owners
-
-Add `HasVirtualMachines` to an owner model, such as a user or team:
-
-```php
-namespace App\Models;
-
-use Illuminate\Foundation\Auth\User as Authenticatable;
-use Proxmox\Concerns\HasVirtualMachines;
-
-class User extends Authenticatable
-{
-    use HasVirtualMachines;
-}
-```
-
-The trait provides `$user->virtualMachines()` and `$user->virtualMachines`. Each VM record has `owner`, `cluster`, and `node` relations. The migration's owner columns respect `Schema::morphUsingUuids()` or `Schema::morphUsingUlids()` if configured before migration.
-
-Each VM inventory row represents one lifecycle. Since Proxmox can reuse a VMID after deletion, use the inventory row ID when identifying a VM over time.
-
-### Inventory API resources
-
-Select a live API context using the accessor for each inventory model:
-
-| Inventory model | Entry points | Returned API object |
-| --- | --- | --- |
-| `Proxmox\Models\Cluster` | `$cluster->client()` | `Proxmox\Proxmox` |
-| `Proxmox\Models\Node` | `$node->resource()` | `Proxmox\Resources\Nodes\NodeResource` |
-| `Proxmox\Models\VirtualMachine` | `$record->resource()` | `Proxmox\Resources\VirtualMachines\VirtualMachineResource` |
-
-`$cluster->resource()`, `$node->client()`, and `$record->client()` remain available as deprecated aliases.
-
-These methods select the cluster, node, or VM context without an HTTP request. They may load Eloquent relationships from the database. Call a resource method to fetch data or submit an operation:
-
-```php
-// $cluster, $node, and $record are existing inventory models.
-$clusterClient = $cluster->client();
-$nodeResource = $node->resource();
-$vm = $record->resource();
-
-$nodes = $clusterClient->nodes();
-$nodeStatus = $nodeResource->status();
-$vmStatus = $vm->refresh()->toArray();
-```
-
-You can also select node and VM resources through explicit factories:
-
-```php
-use Proxmox\Resources\Nodes\NodeResource;
-use Proxmox\Resources\VirtualMachines\VirtualMachineResource;
-
-$nodeResource = NodeResource::make($node);
-$vm = VirtualMachineResource::make($record);
-```
-
-`NodeResource::make()` requires a saved node with a related cluster. `VirtualMachineResource::make()` requires a saved, non-deleted VM record with a node belonging to the same cluster. The factories and model accessors send no HTTP requests and leave inventory records unchanged.
-
-A VM resource selected from inventory or by `node()->virtualMachine($vmid)` starts with an empty snapshot: `toArray()` returns `[]` until you call `refresh()`. Live operations never update the inventory record.
-
-### Provisioning and recording a VM
-
-Eloquent VM operations update the database only. Provision the remote VM, wait for completion, and then create its inventory record:
-
-```php
-use Proxmox\Models\Cluster;
-
-// $user uses HasVirtualMachines; $publicKey contains an OpenSSH public key.
-$cluster = Cluster::query()->where('name', 'eu-1')->firstOrFail();
-$node = $cluster->nodes()->where('name', 'pve1')->firstOrFail();
-$client = $node->cluster->client();
-$vmid = $client->nextVirtualMachineId();
-
-$client->node($node->name)->virtualMachines()->create([
-    'vmid' => $vmid,
-    'name' => 'web-'.$vmid,
-    'cores' => 2,
-    'memory' => 4096,
-    'storage' => 'local-lvm',
-    'image' => 'local:import/ubuntu.qcow2',
-    'disk' => 32,
-    'bridge' => 'vmbr0',
-    'ip' => 'dhcp',
-    'user' => 'ubuntu',
-    'ssh_key' => $publicKey,
-])->wait();
-
-$record = $user->virtualMachines()->create([
-    'cluster_id' => $node->cluster_id,
-    'node_id' => $node->id,
-    'vmid' => $vmid,
-    'name' => 'web-'.$vmid,
-]);
-
-$vm = $record->resource();
-$vm->start()->wait();
-```
-
-Use the node's cluster client for provisioning so requests target the same cluster as the inventory record. API settings such as `cores`, `memory`, `image`, and credentials belong in the creation configuration, not Eloquent attributes.
-
-To record an existing VM, create an inventory record with its `cluster_id`, `node_id`, and `vmid` through Eloquent. Creating the record never provisions a remote VM.
-
-### Managing a recorded VM
-
-Select the live resource from the inventory record, then use its management methods:
-
-```php
-$record = $user->virtualMachines()->firstOrFail();
-$vm = $record->resource();
-
-$vm->setMemory(8192)->wait();
-$status = $vm->refresh()->toArray();
-
-$nodeStatus = $record->node->resource()->status();
-```
-
-Destroy the remote VM and delete the inventory separately:
-
-```php
-if (($vm->status()['status'] ?? null) !== 'stopped') {
-    $vm->stop()->wait();
-}
-
-$vm->delete()->wait(); // Destroys the remote VM and disks.
-$record->delete();    // Soft deletes the database row.
-```
-
-Creating, updating, deleting, restoring, or force deleting an inventory record never calls Proxmox. Remote operations and database writes are independent; handle VMID collisions, task failures, missing remote VMs, and database failures in your application. There is no automatic provisioning retry, cleanup, or reconciliation.
-
-### Custom inventory models
-
-Extend a package model to add application behavior:
-
-```php
-namespace App\Models;
-
-class ProxmoxCluster extends \Proxmox\Models\Cluster
-{
-    // Add application-specific relations or behavior.
-}
-```
-
-Register your classes under `models` in `config/proxmox.php`:
-
-```php
-// Inside the models array in config/proxmox.php:
-'cluster' => App\Models\ProxmoxCluster::class,
-'node' => Proxmox\Models\Node::class,
-'virtual_machine' => Proxmox\Models\VirtualMachine::class,
-```
-
-Each class must extend its corresponding package model. The manager, relations, and ownership trait use the configured classes.
+Authorize access through your application's records before selecting a VM. Treat the stored node as current placement and update it if the VM moves. Keep an application record ID for each service lifecycle; Proxmox can reuse VMIDs after deletion. Remote operations and local writes are independent, so the application handles provisioning failures and reconciliation. Application model creation/deletion and remote VM creation/deletion are separate operations.
 
 ## Raw HTTP requests
 
 Use the underlying client for endpoints beyond the resource API or when you need response headers and status codes:
 
 ```php
-use Proxmox\Facades\Proxmox;
+use Proxmox\Facades\Cluster;
 
-$response = Proxmox::get('cluster/resources', ['type' => 'vm']);
+$connection = Cluster::connection('hetzner');
+$response = $connection->get('cluster/resources', ['type' => 'vm']);
 $resources = $response->throw()->json('data');
 
-$version = Proxmox::request('GET', 'version')->throw()->json('data');
+$version = $connection->request('GET', 'version')->throw()->json('data');
 ```
 
 `get()`, `post()`, `put()`, `delete()`, and `request()` return `Illuminate\Http\Client\Response`. Call `throw()` yourself to raise HTTP errors and unwrap `data` when needed. Endpoints must be non-empty paths relative to the configured API URL.
@@ -762,7 +540,7 @@ Resource methods unwrap responses, validate their expected shape, and raise exce
 | `Illuminate\Http\Client\ConnectionException` | An HTTP connection failed |
 | `Illuminate\Http\Client\RequestException` | Proxmox returned an HTTP error |
 | `InvalidArgumentException` | An identifier or operation argument is invalid |
-| `Proxmox\Exceptions\InvalidConfigurationException` | A connection, mode, model class, or required setting is missing or invalid |
+| `Proxmox\Exceptions\InvalidConfigurationException` | A stored cluster or required connection setting is missing or invalid |
 | `Proxmox\Exceptions\UnexpectedResponseException` | Proxmox returned data in an unexpected shape |
 | `Proxmox\Exceptions\TaskFailedException` | A waited task finished with an error; exposes `upid` and `exitStatus` |
 | `Proxmox\Exceptions\TaskTimeoutException` | Task polling exceeded its timeout; exposes `upid` and `timeout` |
@@ -771,37 +549,28 @@ All four package exception classes implement `Proxmox\Exceptions\ProxmoxExceptio
 
 ## Testing
 
-The package uses Laravel's HTTP client, so application tests can fake API responses without a Proxmox server. Supply dummy connection settings and prevent real requests:
+Use Laravel's HTTP fakes with temporary connection settings to test API operations without a Proxmox server or stored connection:
 
 ```php
 use Illuminate\Support\Facades\Http;
-use Proxmox\Facades\Proxmox;
+use Proxmox\Facades\Cluster;
 
 it('lists virtual machines on a node', function () {
-    config()->set([
-        'proxmox.mode' => 'api',
-        'proxmox.default' => 'default',
-        'proxmox.connections.default.url' => 'https://proxmox.example.test:8006/api2/json',
-        'proxmox.connections.default.api_token_id' => 'laravel@pve!test',
-        'proxmox.connections.default.api_token_secret' => 'test-secret',
+    $connection = Cluster::connectUsing('testing', [
+        'url' => 'https://proxmox.example.test:8006/api2/json',
+        'api_token_id' => 'laravel@pve!test',
+        'api_token_secret' => 'test-secret',
     ]);
 
-    Proxmox::purge('default');
     Http::preventStrayRequests();
-    Http::fake([
-        '*/nodes/pve1/qemu' => Http::response([
-            'data' => [['vmid' => 101]],
-        ]),
-    ]);
+    Http::fake(['*/nodes/pve1/qemu' => Http::response(['data' => [['vmid' => 101]]])]);
 
-    expect(Proxmox::node('pve1')->virtualMachines()->all())
-        ->toBe([['vmid' => 101]]);
-
+    expect($connection->node('pve1')->virtualMachines())->toBe([['vmid' => 101]]);
     Http::assertSentCount(1);
 });
 ```
 
-When testing task waits, fake the task status endpoint too, including `status: stopped` and `exitstatus: OK` for a successful result.
+To test stored connection resolution, run the package migration and create a `Proxmox\Models\Cluster` record in your test database. Node/VM API tests need no package node or VM records. Fake task status endpoints when waiting for tasks, including `status: stopped` and `exitstatus: OK` for a successful result.
 
 ### Package development
 
@@ -820,30 +589,18 @@ After cloning the repository, run `composer install`. Available checks and workb
 
 ## Upgrading
 
-See [CHANGELOG.md](CHANGELOG.md) for release changes and breaking changes. Earlier API shapes map to the current API as follows:
+This version simplifies persistence to stored cluster connections. Update consumers before upgrading:
 
-| Previous API | Current API |
-| --- | --- |
-| `Proxmox::getNodes()` | `Proxmox::nodes()` |
-| `Proxmox::getNode($node)` | `Proxmox::node($node)->status()` |
-| `Proxmox::getVirtualMachines($node)` | `Proxmox::node($node)->virtualMachines()->all()` |
-| `Proxmox::getVirtualMachine($node, $id)` | `Proxmox::node($node)->virtualMachine($id)->status()` |
-| `Proxmox::getImages($node, $storage)` | `Proxmox::node($node)->images($storage)` |
-| `Proxmox::createVirtualMachine($node, $config)` | `Proxmox::node($node)->virtualMachines()->create($config)` |
-| `Proxmox::nodes($node)` | `Proxmox::node($node)` |
-| `Proxmox::virtualMachines()` | Select a node, then call `virtualMachines()->all()` |
-| `node()->makeVirtualMachine($id)->...->create()` | `node()->virtualMachines()->create(['vmid' => $id, ...])` |
-| Inventory VM management methods | `$record->resource()` followed by a resource operation |
+- Import `Proxmox\Facades\Cluster` instead of `Proxmox\Facades\Proxmox`.
+- Store connections in `proxmox_clusters`. Configuration-backed connections and the `api` / `inventory` modes have been removed. `config/proxmox.php` contains only `default`.
+- Replace `node($name)->virtualMachines()->all()` with `node($name)->virtualMachines()`.
+- Replace `node($name)->virtualMachines()->create($configuration)` with `node($name)->createVirtualMachine($configuration)`.
+- Replace package Eloquent node/VM models, `HasVirtualMachines`, model resource accessors, and inventory resource factories with application-owned records and explicit `connection()->node()->virtualMachine()` selection.
+- Replace scheduled node synchronization commands with application-owned fetching and persistence when needed.
 
-VM selection no longer fetches a snapshot. Replace `virtualMachine($id)->toArray()` with `virtualMachine($id)->refresh()->toArray()` or use `status()` for a fresh array. For named arguments, replace `setMemory(megabytes: ...)` with `setMemory(mebibytes: ...)` and `growDisk(gigabytes: ...)` with `growDisk(gibibytes: ...)`. Positional arguments continue to work.
+The installer preserves previously published migrations and configuration. Existing node/VM tables and their data are left untouched. Migrate ownership and service data into your application's models before retiring old tables. Existing cluster connection records remain usable; the old `is_active` field is no longer used.
 
-Use `Proxmox\Resources\Nodes\NodeResource` and `Proxmox\Resources\VirtualMachines\VirtualMachineResource` for explicit [inventory resource factories](#inventory-api-resources). Both factories remain supported alongside the model accessors. The existing `Proxmox\Resources\VirtualMachines\VirtualMachine` class and its `make()` factory also remain compatible; `VirtualMachineResource` extends that class.
-
-Listing methods return arrays; use Laravel collections for local queries. Node and VM `get()`/`first()` aliases, the VM `vm()` alias, and the pending creation builder have been removed. Creation and mutation methods return task objects rather than UPID strings.
-
-Inventory models no longer provision or destroy VMs through lifecycle hooks. Replace `creationTask()`, `api()`, and `withoutProxmox()` workflows with explicit [inventory operations](#provisioning-and-recording-a-vm).
-
-Connections now live under `proxmox.default` and `proxmox.connections`. Direct resource imports use `Proxmox\Resources\Nodes`, `Proxmox\Resources\VirtualMachines`, and `Proxmox\Resources\Tasks`; Eloquent inventory models remain under `Proxmox\Models`.
+VM power, configuration, creation, metrics, snapshots, and task methods remain available. Creation and mutation methods return `Task` objects; wait for completion explicitly where needed. See [CHANGELOG.md](CHANGELOG.md) for release changes.
 
 ## Contributing
 
