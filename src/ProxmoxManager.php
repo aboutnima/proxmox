@@ -47,6 +47,24 @@ class ProxmoxManager
     }
 
     /**
+     * @return class-string<Cluster>
+     *
+     * @throws InvalidConfigurationException
+     *
+     * @internal
+     */
+    public function clusterModel(): string
+    {
+        $model = $this->config->get('proxmox.model', Cluster::class);
+
+        if (! is_string($model) || ! is_a($model, Cluster::class, true)) {
+            throw InvalidConfigurationException::invalidClusterModel();
+        }
+
+        return $model;
+    }
+
+    /**
      * Build a standalone client from runtime settings without registering it.
      *
      * @param  array<array-key, mixed>  $config
@@ -71,7 +89,8 @@ class ProxmoxManager
      */
     protected function resolve(string $name): Proxmox
     {
-        $cluster = Cluster::query()->where('name', $name)->first();
+        $model = $this->clusterModel();
+        $cluster = $model::query()->where('name', $name)->first();
 
         if ($cluster === null) {
             throw InvalidConfigurationException::clusterNotFound($name);

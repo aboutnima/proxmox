@@ -28,6 +28,11 @@ class InvalidConfigurationException extends LogicException implements ProxmoxExc
         return new self("Proxmox cluster [{$cluster}] does not exist. Add it with: php artisan proxmox:create-cluster {$cluster}");
     }
 
+    public static function invalidClusterModel(): self
+    {
+        return new self('proxmox.model must be [Proxmox\\Models\\Cluster] or a class extending it.');
+    }
+
     public static function caBundleBlobUnsupported(string $connection): self
     {
         return new self("The CA certificate for connection [{$connection}] needs cURL 7.77 or newer. Use a CA file path instead.");

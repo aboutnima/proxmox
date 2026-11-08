@@ -11,7 +11,6 @@ use Illuminate\Http\Client\Factory;
 use Illuminate\Support\ServiceProvider;
 use Proxmox\Console\Commands\CreateClusterCommand;
 use Proxmox\Console\Commands\InstallCommand;
-use Proxmox\Models\Cluster;
 use Throwable;
 
 class ProxmoxServiceProvider extends ServiceProvider
@@ -66,8 +65,10 @@ class ProxmoxServiceProvider extends ServiceProvider
      */
     protected function connectionNames(): string
     {
+        $model = $this->app->make(ProxmoxManager::class)->clusterModel();
+
         try {
-            return Cluster::query()->orderBy('name')->pluck('name')->implode(', ');
+            return $model::query()->orderBy('name')->pluck('name')->implode(', ');
         } catch (Throwable) {
             return 'Unavailable (run the cluster migration)';
         }

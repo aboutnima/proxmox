@@ -33,7 +33,10 @@ it('exposes the cluster facade through the connection manager', function () {
 });
 
 it('merges the minimal package configuration', function () {
-    expect(config('proxmox'))->toBe(['default' => 'default']);
+    expect(config('proxmox'))->toBe([
+        'default' => 'default',
+        'model' => ClusterRecord::class,
+    ]);
 });
 
 it('boots without running migrations or requiring a stored connection', function () {

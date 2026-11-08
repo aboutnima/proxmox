@@ -6,7 +6,7 @@ namespace Proxmox\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
-use Proxmox\Models\Cluster;
+use Proxmox\ProxmoxManager;
 
 use function Laravel\Prompts\password;
 use function Laravel\Prompts\text;
@@ -24,8 +24,9 @@ class CreateClusterCommand extends Command
 
     protected $description = 'Store a named Proxmox cluster connection';
 
-    public function handle(Filesystem $files): int
+    public function handle(Filesystem $files, ProxmoxManager $manager): int
     {
+        $model = $manager->clusterModel();
         $name = $this->stringInput($this->argument('name')) ?? text(
             label: 'Cluster name',
             placeholder: 'default',
@@ -39,7 +40,7 @@ class CreateClusterCommand extends Command
             return self::FAILURE;
         }
 
-        if (Cluster::query()->where('name', $name)->exists()) {
+        if ($model::query()->where('name', $name)->exists()) {
             $this->components->error("Cluster [{$name}] already exists.");
 
             return self::FAILURE;
@@ -51,7 +52,7 @@ class CreateClusterCommand extends Command
             return self::FAILURE;
         }
 
-        Cluster::query()->create([
+        $model::query()->create([
             'name' => $name,
             ...$attributes,
         ]);
