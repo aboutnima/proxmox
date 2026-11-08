@@ -58,21 +58,6 @@ class VirtualMachine implements Arrayable, JsonSerializable
     }
 
     /**
-     * Fetch operating system information reported by the QEMU guest agent.
-     *
-     * @return array<array-key, mixed>|null
-     *
-     * @throws ConnectionException
-     * @throws InvalidConfigurationException
-     * @throws RequestException
-     * @throws UnexpectedResponseException
-     */
-    public function osInfo(): ?array
-    {
-        return $this->guestAgent()->osInfo();
-    }
-
-    /**
      * Fetch guest IPv4 and IPv6 addresses, excluding loopback and link-local addresses.
      *
      * @return array{ipv4: list<string>|null, ipv6: list<string>|null}

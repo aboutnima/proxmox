@@ -19,14 +19,6 @@ final readonly class VirtualMachineGuestAgent
     public function __construct(private Proxmox $client, private string $path) {}
 
     /**
-     * @return array<array-key, mixed>|null
-     */
-    public function osInfo(): ?array
-    {
-        return $this->run('get-osinfo');
-    }
-
-    /**
      * @return array{ipv4: list<string>|null, ipv6: list<string>|null}
      */
     public function networkInfo(): array

@@ -351,31 +351,6 @@ it('falls back to host-side memory usage and skips the agent when it is not enab
     Http::assertSentCount(2);
 });
 
-it('returns operating system information from the guest agent', function () {
-    Http::fake(['*/nodes/my/qemu/101/agent/get-osinfo' => Http::response(['data' => ['result' => [
-        'id' => 'ubuntu',
-        'name' => 'Ubuntu',
-        'pretty-name' => 'Ubuntu 24.04 LTS',
-        'version' => '24.04',
-    ]]])]);
-
-    expect(usageVirtualMachine()->osInfo())->toBe([
-        'id' => 'ubuntu',
-        'name' => 'Ubuntu',
-        'pretty-name' => 'Ubuntu 24.04 LTS',
-        'version' => '24.04',
-    ]);
-
-    Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
-        && $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/qemu/101/agent/get-osinfo');
-});
-
-it('returns null operating system information when the guest agent is not running', function () {
-    Http::fake(['*/nodes/my/qemu/101/agent/get-osinfo' => Http::response(['data' => null], 500)]);
-
-    expect(usageVirtualMachine()->osInfo())->toBeNull();
-});
-
 it('returns guest IPv4 and IPv6 addresses without local addresses', function () {
     Http::fake(['*/nodes/my/qemu/101/agent/network-get-interfaces' => Http::response(['data' => ['result' => [
         ['ip-addresses' => [
