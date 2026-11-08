@@ -6,6 +6,7 @@
 
 - `Proxmox\Facades\ProxmoxCluster` for named API connections, such as `ProxmoxCluster::connection('hetzner')->nodes()`.
 - A single cluster connection registry with encrypted token secrets and per-connection HTTP/TLS settings.
+- A `client()` method on the `Cluster` model to build a fresh API client directly from a record, including `Cluster::findOrFail(1)->client()->nodes()`, without another database lookup.
 - Configurable cluster models through `proxmox.model`, used for connection lookup, cluster creation, duplicate checks, and the `about` listing. Custom models extend `Proxmox\Models\Cluster`.
 - `php artisan proxmox:install [--migrate]` for repeatable configuration and migration publication, and `php artisan proxmox:create-cluster` for interactive connection setup.
 

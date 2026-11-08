@@ -113,6 +113,23 @@ The public classes have separate responsibilities:
 
 Fetching nodes or VMs never creates local records. VM creation and deletion affect Proxmox; applications persist their own service records separately.
 
+### Use a stored cluster directly
+
+Build an API client from a cluster record:
+
+```php
+use Proxmox\Models\Cluster;
+
+$nodes = Cluster::findOrFail(1)->client()->nodes();
+
+$client = Cluster::findOrFail(1)->client();
+$vms = $client->node('pve1')->virtualMachines();
+```
+
+`client()` returns a fresh `Proxmox\Proxmox` instance, the same API client type returned by `ProxmoxCluster::connection()`. It uses the loaded model's current attributes, including unsaved changes, without another database lookup or saving the record. Creating the client makes no HTTP request.
+
+Call `$cluster->refresh()` before `client()` when you need to reload settings changed elsewhere. Custom cluster models inherit `client()` too.
+
 ### Custom cluster model
 
 Extend the package model in your application to add cluster-specific relations or behavior:
@@ -134,7 +151,7 @@ Set its class in the published `config/proxmox.php`:
 'model' => App\Models\Cluster::class,
 ```
 
-The default is `Proxmox\Models\Cluster::class`. The configured class must extend that model to inherit encrypted credentials, hidden secrets, connection defaults, and `toConnectionConfig()`.
+The default is `Proxmox\Models\Cluster::class`. The configured class must extend that model to inherit encrypted credentials, hidden secrets, connection defaults, `client()`, and `toConnectionConfig()`.
 
 Connection lookups, `proxmox:create-cluster` (including duplicate-name checks), and `php artisan about --only=proxmox` use the configured model. Use your application's model for its own Eloquent queries too. Rebuild Laravel's configuration cache after changing this option if configuration is cached.
 
