@@ -216,7 +216,7 @@ readonly class Node
     }
 
     /**
-     * List QCOW2 sources on storage with the "import" content type enabled.
+     * List QCOW2 and RAW sources on storage with the "import" content type enabled.
      *
      * @return list<array<array-key, mixed>>
      *
@@ -240,7 +240,7 @@ readonly class Node
                 throw UnexpectedResponseException::expectedImage();
             }
 
-            if ($image['format'] === 'qcow2') {
+            if (in_array($image['format'], ['qcow2', 'raw'], true)) {
                 $sources[] = $image;
             }
         }

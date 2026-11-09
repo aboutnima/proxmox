@@ -98,8 +98,8 @@ final class VirtualMachineConfiguration
 
     private static function image(mixed $image): string
     {
-        if (! is_string($image) || preg_match('/^[a-zA-Z][a-zA-Z0-9_.-]*:import\/[a-zA-Z0-9][a-zA-Z0-9_.-]*\.qcow2$/D', $image) !== 1) {
-            throw new InvalidArgumentException('image must be an importable QCOW2 volume ID such as local:import/ubuntu.qcow2.');
+        if (! is_string($image) || preg_match('/^[a-zA-Z][a-zA-Z0-9_.-]*:import\/[a-zA-Z0-9][a-zA-Z0-9_.-]*\.(?:qcow2|raw)$/D', $image) !== 1) {
+            throw new InvalidArgumentException('image must be an importable QCOW2 or RAW volume ID such as local:import/ubuntu.qcow2 or local:import/ubuntu.img.raw.');
         }
 
         return $image;

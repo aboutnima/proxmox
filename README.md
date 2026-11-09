@@ -424,7 +424,7 @@ The method accepts the common fields below and passes additional native QEMU par
 | `memory` | Memory in MiB |
 | `storage` | Destination storage for readable disk and Cloud-Init fields |
 | `disk` | Positive integer disk size in GiB; requires `storage` |
-| `image` | Importable QCOW2 volume ID; requires `storage` |
+| `image` | Importable QCOW2 or RAW volume ID; requires `storage` |
 | `bridge` | Bridge name; creates a VirtIO `net0` card |
 | `ip` | IPv4 address without a prefix, or `dhcp`; requires `storage` and `bridge` or native `net0` |
 | `prefix` | Integer from `0` to `32`, required for a static `ip` |
@@ -449,9 +449,9 @@ Do not combine readable fields with their native equivalents in the same configu
 
 Readable Cloud-Init fields also conflict with an explicit `ide2`. Native credentials and `sshkeys` pass through unchanged; encode native SSH keys yourself. Other native options, such as additional disks, `ostype`, `onboot`, `boot`, and `scsihw`, can be supplied directly.
 
-### Creating from a QCOW2 cloud image
+### Creating from a QCOW2 or RAW cloud image
 
-List QCOW2 sources on Proxmox storage with the `import` content type enabled:
+List QCOW2 and RAW sources on Proxmox storage with the `import` content type enabled:
 
 ```php
 $images = Cluster::connection('hetzner')->node('pve1')->images('local');
@@ -485,7 +485,7 @@ $task->wait(timeout: 300);
 $client->node('pve1')->virtualMachine($vmid)->start()->wait();
 ```
 
-The image must be an import volume such as `local:import/ubuntu.qcow2`. A download URL, Laravel-local path, ISO, or an existing VM disk is not accepted as an image source. Proxmox imports the source into a new VM disk. Defaults include `virtio-scsi-pci`, booting from `scsi0`, and a serial console; explicit native boot, controller, and console settings are preserved.
+The image must be an import volume ending in `.qcow2` or `.raw`, such as `local:import/ubuntu.qcow2` or `local:import/ubuntu-22.04-lts-server-cloudimg-amd64.img.raw`. A download URL, Laravel-local path, ISO, or an existing VM disk is not accepted as an image source. Proxmox imports the source into a new VM disk. Defaults include `virtio-scsi-pci`, booting from `scsi0`, and a serial console; explicit native boot, controller, and console settings are preserved.
 
 Task behavior depends on the fields supplied:
 

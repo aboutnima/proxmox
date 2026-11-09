@@ -31,11 +31,14 @@ afterEach(function () {
     Carbon::setTestNow();
 });
 
-it('lists importable QCOW2 images as arrays through the facade and client', function (bool $direct) {
+it('lists importable QCOW2 and RAW images as arrays through the facade and client', function (bool $direct) {
     $image = ['format' => 'qcow2', 'size' => 3758096384, 'volid' => 'local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2'];
+
+    $rawImage = ['format' => 'raw', 'size' => 3758096384, 'volid' => 'local:import/ubuntu-22.04-lts-server-cloudimg-amd64.img.raw'];
 
     Http::fake(['*' => Http::response(['data' => [
         $image,
+        $rawImage,
         ['volid' => 'local:import/appliance.ova', 'format' => 'ova'],
     ]])]);
 
@@ -43,7 +46,7 @@ it('lists importable QCOW2 images as arrays through the facade and client', func
         ? Cluster::connection()->node('my')->images('local')
         : Cluster::node('my')->images('local');
 
-    expect($images)->toBeArray()->toBe([$image]);
+    expect($images)->toBeArray()->toBe([$image, $rawImage]);
 
     Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
         && $request->url() === 'https://proxmox.example.test:8006/api2/json/nodes/my/storage/local/content?content=import'
@@ -179,12 +182,12 @@ it('leaves native guest credentials and encoded SSH keys unchanged', function ()
     Http::assertSent(fn (Request $request): bool => $request->data() === $configuration);
 });
 
-it('imports a selected image into a new boot disk with Cloud-Init and a serial console', function () {
+it('imports a selected image into a new boot disk with Cloud-Init and a serial console', function (string $image) {
     Http::fake(['*' => Http::response(['data' => 'UPID:import'])]);
 
     $task = Cluster::node('my')->createVirtualMachine([
         'vmid' => 101,
-        'image' => 'local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2',
+        'image' => $image,
         'storage' => 'local-lvm',
         'bridge' => 'vmbr0',
         'ip' => 'dhcp',
@@ -196,7 +199,7 @@ it('imports a selected image into a new boot disk with Cloud-Init and a serial c
     Http::assertSent(fn (Request $request): bool => $request->data() == [
         'vmid' => 101,
         'storage' => 'local-lvm',
-        'scsi0' => 'local-lvm:0,import-from=local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2',
+        'scsi0' => 'local-lvm:0,import-from='.$image,
         'scsihw' => 'virtio-scsi-pci',
         'boot' => 'order=scsi0',
         'serial0' => 'socket',
@@ -208,7 +211,11 @@ it('imports a selected image into a new boot disk with Cloud-Init and a serial c
     ]);
     Http::assertSentCount(1);
     Sleep::assertNeverSlept();
-});
+})->with([
+    'QCOW2' => 'local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2',
+    'RAW cloud image' => 'local:import/ubuntu-22.04-lts-server-cloudimg-amd64.img.raw',
+    'RAW' => 'local:import/ubuntu.raw',
+]);
 
 it('preserves explicit native boot and console choices for imported images', function () {
     Http::fake(['*' => Http::response(['data' => 'UPID:import'])]);
@@ -343,9 +350,12 @@ it('rejects invalid readable cloud image settings before creation', function (ar
     'ISO source' => [['image' => 'local:iso/ubuntu.qcow2'], 'image'],
     'attached VM disk' => [['image' => 'local:101/vm-101-disk-0.qcow2'], 'image'],
     'image options' => [['image' => 'local:import/ubuntu.qcow2,discard=on'], 'image'],
+    'RAW image options' => [['image' => 'local:import/ubuntu.img.raw,discard=on'], 'image'],
+    'RAW image traversal' => [['image' => 'local:import/../ubuntu.img.raw'], 'image'],
+    'compressed RAW image' => [['image' => 'local:import/ubuntu.img.raw.xz'], 'image'],
     'image traversal' => [['image' => 'local:import/../ubuntu.qcow2'], 'image'],
     'null image' => [['image' => null], 'image'],
-    'non-QCOW2 image' => [['image' => 'local:import/ubuntu.iso'], 'image'],
+    'unsupported image format' => [['image' => 'local:import/ubuntu.iso'], 'image'],
     'image disk conflict' => [['scsi0' => 'local-lvm:32'], 'scsi0'],
     'Cloud-Init conflict' => [['ide2' => 'local:iso/installer.iso'], 'ide2'],
     'null user' => [['user' => null], 'user'],
