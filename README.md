@@ -451,6 +451,8 @@ Readable Cloud-Init fields also conflict with an explicit `ide2`. Native credent
 
 Pass `'agent' => 1` to enable the QEMU Guest Agent option, including when creating from an image. The guest must also have `qemu-guest-agent` installed and running.
 
+Pass `'ciupgrade' => false` to disable automatic package upgrades through Cloud-Init on first boot.
+
 ### Creating from a QCOW2 or RAW cloud image
 
 List QCOW2 and RAW sources on Proxmox storage with the `import` content type enabled:
@@ -475,6 +477,7 @@ $task = $client->node('pve1')->createVirtualMachine([
     'image' => 'local:import/ubuntu.qcow2',
     'storage' => 'local-lvm',
     'agent' => 1,
+    'ciupgrade' => false,
     'disk' => 32,
     'bridge' => 'vmbr0',
     'ip' => '192.0.2.10',

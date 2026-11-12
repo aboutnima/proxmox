@@ -185,6 +185,7 @@ readonly class Node
      *     ipconfig0?: string,
      *     ciuser?: string,
      *     cipassword?: string,
+     *     ciupgrade?: bool|int,
      *     sshkeys?: string,
      *     serial0?: string,
      *     vga?: string,
