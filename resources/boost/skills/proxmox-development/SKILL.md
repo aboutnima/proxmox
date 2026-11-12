@@ -77,6 +77,7 @@ $vm->growDisk('scsi0', 10)->wait();
 ```
 
 - Creation accepts native QEMU fields or readable fields documented in the README. Do not mix readable fields with their native equivalents. The example creates an empty disk; supply an image or native installation parameters when an operating system is needed. Handle concurrent VMID allocation collisions in the application.
+- Pass `'agent' => 1` during creation to enable QEMU Guest Agent communication, including for image imports. The guest must also have `qemu-guest-agent` installed and running. Native agent option strings pass through unchanged.
 - For QCOW2 or RAW imports, the image must already be on Proxmox import storage. `images($storage)` lists both formats. Use an import volume ID ending in `.qcow2` or `.raw`, such as `local:import/ubuntu-22.04-lts-server-cloudimg-amd64.img.raw`. With `image` and `disk`, creation waits for import and returns the resize task; use a queued job and wait before starting. Failed imports and timeouts do not automatically delete remote VMs.
 - Power methods: `start`, `shutdown`, `restart`, `pause`, `hibernate`, `stop`, `reset`, and `resume`. Mutations return `Task` objects. `stop` and `reset` are immediate operations; `shutdown` and `restart` request graceful guest shutdown.
 - Memory is MiB, CPU cores are per socket, and `growDisk` adds GiB to an existing disk. Pending changes may require a restart. Mutations do not update snapshots; call `refresh()`.

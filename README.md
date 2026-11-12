@@ -449,6 +449,8 @@ Do not combine readable fields with their native equivalents in the same configu
 
 Readable Cloud-Init fields also conflict with an explicit `ide2`. Native credentials and `sshkeys` pass through unchanged; encode native SSH keys yourself. Other native options, such as additional disks, `ostype`, `onboot`, `boot`, and `scsihw`, can be supplied directly.
 
+Pass `'agent' => 1` to enable the QEMU Guest Agent option, including when creating from an image. The guest must also have `qemu-guest-agent` installed and running.
+
 ### Creating from a QCOW2 or RAW cloud image
 
 List QCOW2 and RAW sources on Proxmox storage with the `import` content type enabled:
@@ -472,6 +474,7 @@ $task = $client->node('pve1')->createVirtualMachine([
     'memory' => 4096,
     'image' => 'local:import/ubuntu.qcow2',
     'storage' => 'local-lvm',
+    'agent' => 1,
     'disk' => 32,
     'bridge' => 'vmbr0',
     'ip' => '192.0.2.10',

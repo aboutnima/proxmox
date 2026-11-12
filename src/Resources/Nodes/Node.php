@@ -173,6 +173,7 @@ readonly class Node
      *     user?: string,
      *     password?: string,
      *     ssh_key?: string,
+     *     agent?: bool|int|string,
      *     start?: bool|int,
      *     ostype?: string,
      *     onboot?: bool|int,
