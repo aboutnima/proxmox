@@ -1,9 +1,9 @@
 # Proxmox
 
-[![Latest version](https://img.shields.io/packagist/v/aboutnima/proxmox.svg?style=flat-square)](https://packagist.org/packages/aboutnima/proxmox)
-[![PHP version](https://img.shields.io/packagist/php-v/aboutnima/proxmox.svg?style=flat-square)](https://packagist.org/packages/aboutnima/proxmox)
-[![Tests](https://img.shields.io/github/actions/workflow/status/aboutnima/proxmox/tests.yml?branch=main&label=Tests&style=flat-square)](https://github.com/aboutnima/proxmox/actions/workflows/tests.yml)
-[![License](https://img.shields.io/github/license/aboutnima/proxmox?style=flat-square)](LICENSE.md)
+[![Latest version](https://img.shields.io/packagist/v/jaryan-host/proxmox.svg?style=flat-square)](https://packagist.org/packages/jaryan-host/proxmox)
+[![PHP version](https://img.shields.io/packagist/php-v/jaryan-host/proxmox.svg?style=flat-square)](https://packagist.org/packages/jaryan-host/proxmox)
+[![Tests](https://img.shields.io/github/actions/workflow/status/jaryan-host/proxmox/tests.yml?branch=main&label=Tests&style=flat-square)](https://github.com/jaryan-host/proxmox/actions/workflows/tests.yml)
+[![License](https://img.shields.io/github/license/jaryan-host/proxmox?style=flat-square)](LICENSE.md)
 
 A Laravel package for the Proxmox VE REST API. Store named cluster connections with encrypted API credentials, fetch live nodes and QEMU virtual machines, and manage VMs through a fluent API.
 
@@ -24,6 +24,7 @@ The package owns one table: `clusters`. Applications decide how to store, cache,
 - [Error handling](#error-handling)
 - [Testing](#testing)
 - [Upgrading](#upgrading)
+- [Contributing](#contributing)
 
 ## Requirements
 
@@ -39,15 +40,35 @@ The resource API manages QEMU VMs. Use the raw HTTP client for other Proxmox end
 
 ## Installation
 
+In an existing Laravel application, configure the database and ensure `APP_KEY` is set, then install the package:
+
 ```bash
-composer require aboutnima/proxmox
+composer require jaryan-host/proxmox
+```
+
+Publish the configuration and create the cluster connection table:
+
+```bash
 php artisan proxmox:install --migrate
-php artisan proxmox:create-cluster hetzner
 ```
 
 Laravel discovers the service provider and the `Cluster` facade. The installer publishes `config/proxmox.php` and one migration that creates `clusters`. With `--migrate`, it runs Laravel's pending migrations. Without the flag, you can run `php artisan migrate` separately.
 
+Create a named cluster connection:
+
+```bash
+php artisan proxmox:create-cluster hetzner
+```
+
 The cluster command prompts for the API URL, token identifier, and token secret. Include `/api2/json` in the URL, for example `https://proxmox.example.com:8006/api2/json`. The secret is entered through a hidden prompt.
+
+To use this cluster as the default connection, set the following in your application's `.env` file and rebuild the configuration cache if enabled:
+
+```dotenv
+PROXMOX_CONNECTION=hetzner
+```
+
+You can now fetch nodes and virtual machines:
 
 ```php
 use Proxmox\Facades\Cluster;
@@ -619,21 +640,6 @@ it('lists virtual machines on a node', function () {
 
 To test stored connection resolution, run the package migration and create a record through the configured cluster model in your test database. Node/VM API tests need no package node or VM records. Fake task status endpoints when waiting for tasks, including `status: stopped` and `exitstatus: OK` for a successful result.
 
-### Package development
-
-After cloning the repository, run `composer install`. Available checks and workbench commands are:
-
-| Command | Purpose |
-| --- | --- |
-| `composer test` | Static analysis, formatting check, type coverage, and Pest tests |
-| `composer analyse` | PHPStan analysis |
-| `composer lint:check` | Check PHP formatting |
-| `composer lint` | Format PHP files |
-| `composer test:types` | Check type coverage at the configured 100% minimum |
-| `composer test:unit` | Run Pest tests in parallel |
-| `composer build` | Build the Testbench workbench |
-| `composer serve` | Build and serve the workbench |
-
 ## Upgrading
 
 This version simplifies persistence to stored cluster connections. Update consumers before upgrading:
@@ -654,14 +660,33 @@ VM power, configuration, creation, metrics, snapshots, and task methods remain a
 
 ## Contributing
 
-See the [contribution guide](.github/CONTRIBUTING.md) for the development workflow and run `composer test` before submitting changes.
+Bug reports, documentation improvements, and pull requests are welcome. For significant changes, [open an issue](https://github.com/jaryan-host/proxmox/issues) first to discuss the approach.
 
-Report vulnerabilities according to the [security policy](.github/SECURITY.md).
+1. Fork [jaryan-host/proxmox](https://github.com/jaryan-host/proxmox) and clone your fork.
+2. Create a branch for your change and run `composer install` to install development dependencies.
+3. Make your changes, add focused tests for behavior changes, and update the relevant documentation.
+4. Run `composer test` before submitting your changes.
+5. Push the branch to your fork and open a pull request against `main`, describing the change and how you tested it.
+
+Available checks and workbench commands are:
+
+| Command | Purpose |
+| --- | --- |
+| `composer test` | Static analysis, formatting check, type coverage, and Pest tests |
+| `composer analyse` | PHPStan analysis |
+| `composer lint:check` | Check PHP formatting |
+| `composer lint` | Format PHP files |
+| `composer test:types` | Check type coverage at the configured 100% minimum |
+| `composer test:unit` | Run Pest tests in parallel |
+| `composer build` | Build the Testbench workbench |
+| `composer serve` | Build and serve the workbench |
+
+See the [contribution guide](.github/CONTRIBUTING.md) for setup details and package conventions. Report vulnerabilities according to the [security policy](.github/SECURITY.md).
 
 ## Credits
 
 - [Nima Asaadi](https://github.com/aboutnima)
-- [Contributors](https://github.com/aboutnima/proxmox/graphs/contributors)
+- [Contributors](https://github.com/jaryan-host/proxmox/graphs/contributors)
 
 ## License
 

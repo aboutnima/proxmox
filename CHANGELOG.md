@@ -1,6 +1,6 @@
 # Release Notes
 
-## [Unreleased](https://github.com/aboutnima/proxmox/compare/v0.1.0...1.x)
+## [Unreleased](https://github.com/jaryan-host/proxmox/compare/v0.1.0...1.x)
 
 ### Added
 
@@ -28,6 +28,6 @@
 - Node synchronization commands and lifecycle tracking through package tables.
 - Cluster `is_active`, installer mode options, and the cluster command's configuration import options.
 
-## [v0.1.0](https://github.com/aboutnima/proxmox/compare/...v0.1.0) - 202x-xx-xx
+## [v0.1.0](https://github.com/jaryan-host/proxmox/compare/...v0.1.0) - 202x-xx-xx
 
 Initial pre-release.
